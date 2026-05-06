@@ -1,0 +1,11 @@
+{
+  "name": "@gil/skills",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "link": "node scripts/link-skills.mjs",
+    "link:dry-run": "node scripts/link-skills.mjs --dry-run",
+    "deps": "node scripts/link-skills.mjs --deps-only",
+    "deps:dry-run": "node scripts/link-skills.mjs --deps-only --dry-run"
+  }
+}
