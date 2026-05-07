@@ -7,7 +7,7 @@ description: Runs an autonomous architecture-deepening loop that turns codebase 
 
 ## Quick start
 
-Run the full loop for the target repo: load `improve-codebase-architecture`, process every candidate through a non-interactive `grill-me` pass, synthesize a PRD with `to-prd`, immediately turn that PRD into implementation issues with `to-issues`, triage them with `triage`, then supervise developer sub-agents until every created AFK issue is green or explicitly blocked.
+Run the full loop for the target repo: load `improve-codebase-architecture`, process every candidate through a non-interactive `grill-me` pass, synthesize a PRD with `to-prd`, immediately turn that PRD into implementation issues with `to-issues`, triage them with `triage`, supervise developer sub-agents until every created AFK issue is green or explicitly blocked, then start a fresh reviewer/fixer sub-agent for every implemented issue before the final repo gate.
 
 Full-auto means the user gets one selection checkpoint after the first architecture analysis, then should not be interviewed during the loop unless a true blocker appears. It does not override safety, repo policy, external-action boundaries, or blockers that truly require human input.
 
@@ -91,7 +91,19 @@ For each architecture candidate:
 9. Do not claim completion from progress text alone. Require a terminal handoff, changed files when code changed, and verification evidence.
 10. If a supervised worker returns `needs_integration` or only references sandbox-local artifacts, the parent must integrate or convert those artifacts into the canonical workspace, rerun verification, and only then mark the issue `verified`.
 
-### 8. Integration And Final Gate
+### 8. Per-Issue Review And Fix Pass
+
+After implementation and slice verification:
+
+1. Spawn one fresh reviewer/fixer sub-agent for every implemented `ready-for-agent` issue, preferably not the original worker.
+2. Give each reviewer exactly one issue, the PRD/candidate context, acceptance criteria, worker handoff, changed files, relevant diff, and verification evidence.
+3. Ask the reviewer to inspect the work against the issue and architecture goal, run or recommend targeted checks, fix problems directly when safely in scope, and return changed files plus evidence.
+4. Run independent review passes in parallel. Serialize reviews that may touch the same risky files, public contracts, migrations, data models, or shared tests.
+5. If a reviewer makes fixes, rerun the issue's relevant checks and update the issue/state file as `review_fixed` only after the evidence is green.
+6. If a reviewer finds a problem that is outside the issue scope or needs a human decision, mark the issue `review_blocked` with evidence and the smallest targeted question.
+7. Do not enter the final gate until every implemented issue is `reviewed`, `review_fixed`, or explicitly blocked.
+
+### 9. Integration And Final Gate
 
 Before reporting success:
 
