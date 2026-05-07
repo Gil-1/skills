@@ -18,7 +18,7 @@ This installs:
 
 - `architecture-autopilot` - turns architecture improvement candidates into decisions, a PRD, issues, implementation work, and verification.
 - `prd-to-prod-autopilot` - turns an existing PRD into implementation issues, triages them, supervises delivery, and verifies the repo.
-- `project-folder-structure` - audits and improves folder structure so projects stay easier to navigate and maintain.
+- `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 
 ## Matt Pocock Dependencies
 

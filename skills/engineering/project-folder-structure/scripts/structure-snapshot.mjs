@@ -29,6 +29,17 @@ const DEFAULT_IGNORES = [
 
 const SENSITIVE_NAME_PREFIXES = [".env.", ".env-"];
 
+const SENSITIVE_SIGNAL_NAMES = new Set([
+  ".env",
+  ".envrc",
+  ".secrets",
+  "credentials",
+  "credentials.json",
+  "secret",
+  "secrets.json",
+  "secrets",
+]);
+
 const DOC_SIGNAL_NAMES = new Set([
   "agents.md",
   "claude.md",
@@ -47,38 +58,102 @@ const DOC_SIGNAL_NAMES = new Set([
 
 const DOC_SIGNAL_DIRS = new Set(["docs", "doc", "adr", "adrs", "architecture", "design"]);
 
-const TECH_SIGNAL_NAMES = new Set([
-  "package.json",
-  "pnpm-workspace.yaml",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
+const CONSTRAINT_SIGNAL_NAMES = new Set([
+  ".dockerignore",
+  ".editorconfig",
+  ".gitignore",
+  ".prettierrc",
+  "adr.md",
+  "adrs.md",
+  "alembic.ini",
+  "app.json",
+  "bun.lock",
   "bun.lockb",
-  "tsconfig.json",
-  "jsconfig.json",
-  "pyproject.toml",
-  "requirements.txt",
-  "poetry.lock",
-  "uv.lock",
-  "go.mod",
-  "cargo.toml",
-  "gemfile",
+  "cargo.lock",
+  "catalog-info.yaml",
+  "cloudbuild.yaml",
   "composer.json",
+  "compose.yaml",
+  "deno.json",
+  "deno.lock",
+  "docusaurus.config.js",
+  "docker-compose.yaml",
+  "docker-compose.yml",
+  "dockerfile",
+  "flake.nix",
+  "fly.toml",
+  "gemfile",
+  "gemfile.lock",
+  "go.mod",
+  "go.sum",
+  "gradle.properties",
+  "hugo.toml",
+  "justfile",
+  "lerna.json",
+  "makefile",
+  "mkdocs.yml",
+  "nx.json",
+  "package.json",
+  "package-lock.json",
+  "pipfile",
+  "pipfile.lock",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "poetry.lock",
+  "procfile",
+  "project.toml",
+  "pyproject.toml",
+  "pytest.ini",
+  "quarto.yml",
+  "railway.json",
+  "renovate.json",
+  "requirements-dev.txt",
+  "requirements.txt",
+  "schema.prisma",
+  "settings.gradle",
+  "taskfile.yml",
+  "terraform.tf",
+  "turbo.json",
+  "tsconfig.json",
+  "uv.lock",
+  "vercel.json",
+  "workspace.json",
+  "yarn.lock",
+  "jsconfig.json",
+  "cargo.toml",
   "pom.xml",
   "build.gradle",
-  "settings.gradle",
-  "dockerfile",
-  "docker-compose.yml",
   "angular.json",
   "astro.config.mjs",
   "svelte.config.js",
   "nuxt.config.ts",
   "remix.config.js",
   "tailwind.config.js",
-  "schema.prisma",
 ]);
 
-const TECH_SIGNAL_PREFIXES = [
+const CONSTRAINT_SIGNAL_DIRS = new Set([
+  ".github",
+  ".gitlab",
+  ".husky",
+  ".vscode",
+  "bin",
+  "cmd",
+  "config",
+  "db",
+  "deploy",
+  "deployment",
+  "environments",
+  "infra",
+  "infrastructure",
+  "migrations",
+  "public",
+  "static",
+]);
+
+const CONSTRAINT_SIGNAL_PREFIXES = [
+  ".babelrc",
+  ".eslintrc",
+  ".nvmrc",
   "next.config.",
   "vite.config.",
   "vitest.config.",
@@ -88,6 +163,40 @@ const TECH_SIGNAL_PREFIXES = [
   "playwright.config.",
   "pytest.",
 ];
+
+const LIFECYCLE_SIGNAL_NAMES = new Set([
+  "artifact",
+  "artifacts",
+  "archive",
+  "archived",
+  "assets",
+  "cache",
+  "data",
+  "datasets",
+  "deprecated",
+  "dist",
+  "drafts",
+  "examples",
+  "experiments",
+  "exports",
+  "fixtures",
+  "generated",
+  "legacy",
+  "logs",
+  "media",
+  "notebooks",
+  "output",
+  "outputs",
+  "reports",
+  "runtime",
+  "samples",
+  "sandbox",
+  "sandboxes",
+  "scratch",
+  "state",
+  "temp",
+  "tmp",
+]);
 
 const GENERIC_FOLDER_NAMES = new Set([
   "common",
@@ -108,7 +217,7 @@ function help() {
   return `Usage: structure-snapshot.mjs [options]
 
 Read-only folder structure snapshot. Counts names only; never reads file contents.
-Also reports documentation, framework, and generic-folder signals found by name.
+Also reports documentation, constraint, lifecycle/status, and generic-folder signals found by name.
 
 Options:
   --root <path>              Root to scan (default: current directory)
@@ -182,6 +291,11 @@ function isSensitiveName(entryName) {
   return SENSITIVE_NAME_PREFIXES.some((prefix) => lowerName.startsWith(prefix));
 }
 
+function isSensitiveSignal(entryName) {
+  const lowerName = entryName.toLowerCase();
+  return SENSITIVE_SIGNAL_NAMES.has(lowerName) || isSensitiveName(entryName);
+}
+
 function isDocSignal(entryName, relPath, isDirectory) {
   const lowerName = entryName.toLowerCase();
   const lowerRel = normalizeRelative(relPath).toLowerCase();
@@ -190,12 +304,17 @@ function isDocSignal(entryName, relPath, isDirectory) {
   return lowerRel.endsWith("/context.md") || lowerRel.endsWith("/architecture.md");
 }
 
-function isTechSignal(entryName, relPath) {
+function isConstraintSignal(entryName, relPath, isDirectory) {
   const lowerName = entryName.toLowerCase();
   const lowerRel = normalizeRelative(relPath).toLowerCase();
-  if (TECH_SIGNAL_NAMES.has(lowerName)) return true;
-  if (TECH_SIGNAL_PREFIXES.some((prefix) => lowerName.startsWith(prefix))) return true;
+  if (CONSTRAINT_SIGNAL_NAMES.has(lowerName)) return true;
+  if (isDirectory && CONSTRAINT_SIGNAL_DIRS.has(lowerName)) return true;
+  if (CONSTRAINT_SIGNAL_PREFIXES.some((prefix) => lowerName.startsWith(prefix))) return true;
   return lowerRel.endsWith("/prisma/schema.prisma") || lowerRel.endsWith("/alembic.ini");
+}
+
+function isLifecycleSignal(entryName) {
+  return LIFECYCLE_SIGNAL_NAMES.has(entryName.toLowerCase());
 }
 
 async function scanDir(absDir, rootDir, depth, options) {
@@ -211,7 +330,8 @@ async function scanDir(absDir, rootDir, depth, options) {
     truncated: false,
     errors: [],
     docSignals: [],
-    techSignals: [],
+    constraintSignals: [],
+    lifecycleSignals: [],
     children: [],
   };
 
@@ -231,12 +351,16 @@ async function scanDir(absDir, rootDir, depth, options) {
     }
 
     const childRel = rel === "." ? entry.name : `${rel}/${entry.name}`;
+    const isDirectory = entry.isDirectory();
+    if (!isSensitiveSignal(entry.name)) {
+      if (isDocSignal(entry.name, childRel, isDirectory)) node.docSignals.push(childRel);
+      if (isConstraintSignal(entry.name, childRel, isDirectory)) node.constraintSignals.push(childRel);
+      if (isLifecycleSignal(entry.name)) node.lifecycleSignals.push(childRel);
+    }
+
     if (shouldIgnore(entry.name, childRel, options.ignore)) continue;
 
-    if (isDocSignal(entry.name, childRel, entry.isDirectory())) node.docSignals.push(childRel);
-    if (!entry.isDirectory() && isTechSignal(entry.name, childRel)) node.techSignals.push(childRel);
-
-    if (entry.isDirectory()) {
+    if (isDirectory) {
       node.directDirs += 1;
       node.scannedDirs += 1;
       if (depth < options.maxDepth) {
@@ -273,7 +397,8 @@ function renderMarkdown(result) {
   const topLevel = result.tree.children.sort((a, b) => a.path.localeCompare(b.path));
   const warnings = directories.filter((item) => item.truncated || item.errors.length > 0);
   const docSignals = collectSignals(directories, "docSignals").slice(0, 40);
-  const techSignals = collectSignals(directories, "techSignals").slice(0, 40);
+  const constraintSignals = collectSignals(directories, "constraintSignals").slice(0, 60);
+  const lifecycleSignals = collectSignals(directories, "lifecycleSignals").slice(0, 60);
   const genericSignals = directories
     .filter((item) => GENERIC_FOLDER_NAMES.has(path.basename(item.path)) && item.directFiles + item.directDirs >= GENERIC_FOLDER_THRESHOLD)
     .sort((a, b) => (b.directFiles + b.directDirs) - (a.directFiles + a.directDirs))
@@ -300,10 +425,11 @@ function renderMarkdown(result) {
   lines.push(row(["---", "---:", "---:", "---:", "---:", "---"]));
   for (const item of crowded) lines.push(formatNodeRow(item));
 
-  if (docSignals.length > 0 || techSignals.length > 0) {
-    lines.push("", "## Documentation And Technology Signals");
+  if (docSignals.length > 0 || constraintSignals.length > 0 || lifecycleSignals.length > 0) {
+    lines.push("", "## Documentation, Constraint, And Lifecycle Signals");
     if (docSignals.length > 0) lines.push(`- Documentation candidates: ${docSignals.join(", ")}`);
-    if (techSignals.length > 0) lines.push(`- Technology/framework candidates: ${techSignals.join(", ")}`);
+    if (constraintSignals.length > 0) lines.push(`- Constraint candidates: ${constraintSignals.join(", ")}`);
+    if (lifecycleSignals.length > 0) lines.push(`- Lifecycle/status candidates: ${lifecycleSignals.join(", ")}`);
   }
 
   if (genericSignals.length > 0) {

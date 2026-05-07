@@ -1,134 +1,166 @@
 # Project Folder Structure Reference
 
-## Recommended Principle
+## Table Of Contents
 
-Good structure makes the project explain itself. A folder should answer what concept lives here, who owns it, and what changes should stay local.
+- [Purpose](#purpose)
+- [Constraint-First Audit](#constraint-first-audit)
+- [Organizing Axes](#organizing-axes)
+- [Choosing The Axis](#choosing-the-axis)
+- [Naming And Cohesion Tests](#naming-and-cohesion-tests)
+- [Documentation Discovery](#documentation-discovery)
+- [Migration Strategy](#migration-strategy)
+- [Compatibility](#compatibility)
+- [Verification Checklist](#verification-checklist)
+- [Red Flags](#red-flags)
 
-Prefer semantic organization over mechanical organization. A semantic name comes from the project language: a domain concept, workflow, capability, integration, or stable runtime concern. Mechanical names such as `utils`, `helpers`, `services`, `components`, and `scripts` are acceptable only when the contents are genuinely generic and small.
+## Purpose
+
+Good structure makes a project explain itself. A folder should help a maintainer answer:
+
+- What concept, workflow, artifact, or responsibility lives here?
+- Who or what consumes it?
+- What changes should stay local?
+- What constraints make this path stable or risky?
+- What lifecycle does this material have: source, generated, runtime, archived, experimental, public, or private?
+
+Do not optimize for the computer first. Organization exists mostly for human comprehension, collaboration, change confidence, and operational safety.
+
+## Constraint-First Audit
+
+Start by discovering what cannot casually move. These constraints outrank generic structure advice:
+
+- Framework magic paths: routes, pages, static assets, migrations, generated clients, native build files.
+- Public contracts: package exports, CLI commands, SDK imports, URLs, examples, docs links, plugin entrypoints.
+- Runtime contracts: cron payloads, queue names, cache keys, persisted artifacts, model paths, data directories.
+- Operational contracts: CI, deploy config, Dockerfiles, infrastructure state, environment overlays, release scripts.
+- Security boundaries: `.env*`, credentials, auth backups, secret stores, private tokens, customer data.
+- Human contracts: documented habits, onboarding docs, team ownership, client/project folder expectations.
+
+Only after this pass should you judge whether the structure is clear.
+
+## Organizing Axes
+
+Most projects use several axes at once. The goal is to make the dominant axis explicit and avoid accidental mixtures.
+
+| Axis | Use when | Common homes | Risk |
+| --- | --- | --- | --- |
+| Constraint | The toolchain or public contract mandates the path. | `app/`, `pages/`, `migrations/`, `cmd/`, `public/`, `package.json`, `.github/` | Fighting it breaks builds, routes, imports, or deployments. |
+| Concept/capability | Changes follow product, domain, workflow, or stable responsibility. | `billing/`, `orders/`, `rendering/`, `search/`, `reports/` | Names can drift if copied from generic architecture instead of project language. |
+| Change pattern | Files usually change together even if they are different kinds. | `checkout/{ui,api,tests}` or `docs/publishing/{source,assets}` | Can hide shared contracts if everything becomes local. |
+| Audience/consumer | Different people or systems consume different material. | `examples/`, `public-api/`, `operator-tools/`, `internal/` | Can become status theater if not tied to real consumers. |
+| Lifecycle | Materials have different creation, retention, or cleanup rules. | `src/`, `tests/`, `docs/`, `assets/`, `artifacts/`, `runtime/`, `archive/`, `experiments/` | Can scatter one concept if used as the only axis. |
+| Toolbox | Small complementary tools are useful together. | `templates/`, `adapters/`, `plugins/`, `policies/`, `validators/` | Becomes a kind bucket if items are unrelated. |
+| Layer/toolchain | Technical layers are required or genuinely match workflow. | `controllers/`, `repositories/`, `models/`, `infra/`, `platform/` | Often forces one feature change across many folders. |
+| Status/ownership | Workspace-level or portfolio organization matters. | `active/`, `archived/`, `external/`, `forks/`, `clients/` | Goes stale without curation rules. |
+
+## Choosing The Axis
+
+Use this order of reasoning:
+
+1. **Respect constraints.** Preserve required paths and stable contracts. Improve structure inside extension points.
+2. **Follow the change.** If a normal change touches many folders, the current axis may be wrong.
+3. **Name the concept.** Prefer names from docs, issues, UI copy, operations, and domain language.
+4. **Separate lifecycles.** Keep source away from generated output, runtime state, large data, caches, and temporary work.
+5. **Expose consumers.** Public APIs, examples, operator tools, and internal modules deserve clear boundaries.
+6. **Use layers sparingly.** Technical layers are fine when required, but they should not hide the concepts users maintain.
+7. **Keep batches small.** A structure improvement should be reviewable and reversible.
+
+Useful strategies:
+
+- **Component/concept**: strongest when it creates a unit that can be understood in isolation.
+- **Toolbox**: useful when the set is coherent from the consumer's perspective.
+- **Layer**: useful when deployment, framework, team ownership, or generated code makes layers real.
+- **Kind**: risky when folders only say what type of thing files are, not why they belong together.
+
+## Naming And Cohesion Tests
+
+Extract names from the project, not from generic patterns:
+
+1. List the nouns users and docs use: `orders`, `reports`, `datasets`, `captures`, `policies`, `artists`, `clients`.
+2. List the verbs/workflows: `scan`, `publish`, `reconcile`, `render`, `validate`, `schedule`, `sync`.
+3. Identify stable integrations: `github`, `stripe`, `postgres`, `s3`, `figma`, `notion`, `slack`.
+4. Preserve existing casing, singular/plural style, and file naming conventions unless they are the problem.
+
+Use these tests before proposing a move:
+
+- **Reader test**: Can a new maintainer guess what belongs here from the folder name alone?
+- **Change test**: When a feature or workflow changes, will most changed files sit near each other?
+- **Search test**: Will searching for the project term reveal the relevant files?
+- **Deletion test**: If the folder vanished, would a real concept disappear, or would unrelated leftovers scatter elsewhere?
+- **Interface test**: Does the folder expose a clear public surface or just a pile of private details?
+- **Lifecycle test**: Do all files inside have compatible generation, retention, review, and cleanup rules?
+- **Constraint test**: Does the name fit inside required language/tool/framework structure instead of bypassing it?
 
 ## Documentation Discovery
 
-Read documentation before proposing a structure. Folder moves often encode architecture decisions, language/package conventions, framework requirements, CLI contracts, deploy paths, data locations, and operational contracts.
+Read documentation before proposing a structure. Folder moves often encode architecture decisions, language/package conventions, public contracts, deploy paths, data locations, and operational contracts.
 
 Use this order:
 
-1. Local agent and project rules: `AGENTS.md`, `CLAUDE.md`, `README.md`, `CONTRIBUTING.md`.
+1. Agent and project rules: `AGENTS.md`, `CLAUDE.md`, `README.md`, `CONTRIBUTING.md`.
 2. Domain language: `CONTEXT.md`, product docs, workflow docs, issue/PRD docs, glossary files.
 3. Architecture decisions: `docs/architecture*`, `docs/adr/`, `ADR.md`, design notes.
-4. Technology manifests: `package.json`, workspace files, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Gemfile`, `composer.json`, build/tool config, framework config, CI config.
-5. Tests and examples: test layout, Storybook, example apps, fixtures, seed data, smoke tests.
-6. Operational contracts: cron config, deployment config, Dockerfiles, CLI entrypoints, package exports, generated artifact paths.
+4. Manifests and config: package/workspace files, build/tool config, framework config, CI, deploy config.
+5. Tests and examples: test layout, examples, fixtures, seed data, smoke tests, golden files.
+6. Operational contracts: cron config, Dockerfiles, package exports, CLI entrypoints, generated artifact paths, retention docs.
 
-If local docs do not settle conventions, use official documentation for the relevant language, framework, build tool, package manager, database/migration tool, deployment target, or runtime. Prefer docs for the installed major version found in manifests or lockfiles. Do not invent conventions from memory when a tool has prescribed paths.
-
-## Project Type Detection
-
-Do not assume the project is web-based. Classify the project before naming folders:
-
-1. Web app: routes, assets, UI components, server/client boundaries, generated builds.
-2. CLI or library: package exports, `bin` commands, public APIs, examples, fixtures.
-3. Backend service: transport adapters, domain use cases, persistence, migrations, jobs, config.
-4. Data/ML pipeline: ingestion, transforms, models, evaluations, notebooks, artifacts, datasets.
-5. Infrastructure/DevOps: reusable modules, environment overlays, inventories, plans, policies.
-6. Desktop/mobile/embedded: platform folders, native build files, assets, device/runtime constraints.
-7. Automation/workflow repo: triggers, runners, adapters, reports, runtime state, delivery outputs.
-8. Documentation/content repo: source docs, generated site output, media assets, publishing config.
-
-## Semantic Naming Process
-
-Extract names from the repo, not from generic patterns:
-
-1. List the nouns users and docs use for the area: examples are `orders`, `reports`, `runs`, `delivery`, `artists`, `captures`, `billing`, `search`, `recommendations`.
-2. List the verbs/workflows users ask for: examples are `scan`, `publish`, `reconcile`, `render`, `validate`, `schedule`, `sync`.
-3. Identify stable integrations: examples are `github`, `notion`, `stripe`, `discord`, `brave-search`, `postgres`.
-4. Name folders after the stable concept first, then subfolders after responsibilities inside that concept.
-5. Preserve existing casing, singular/plural style, and file naming conventions unless they are the problem being fixed.
-
-Use these naming tests:
-
-1. Reader test: can a new maintainer guess what belongs here from the folder name alone?
-2. Change test: when a feature changes, will most changed files sit near each other?
-3. Search test: will searching for the domain word reveal the relevant files?
-4. Deletion test: if the folder vanished, would its concept vanish, or would mystery files scatter elsewhere?
-5. Toolchain test: does the name fit inside the relevant language/tool/framework structure instead of bypassing it?
-
-## Choosing Folder Axes
-
-Choose domain/capability folders when work changes by user concept, product workflow, or business rule. Examples: `checkout/`, `job-scout/`, `podcast-discovery/`, `daily-artwork/`.
-
-Choose tool/framework/layer folders when the technology requires it or the concern is truly cross-domain. Examples: `app/` routes, `pages/`, `migrations/`, `public/`, `cmd/`, `pkg/`, `src/`, `tests/`, `db/`, `infra/`.
-
-Choose adapter/integration folders when code exists to talk to an external system and the project has more than one such integration. Examples: `adapters/github/`, `integrations/stripe/`, `sources/brave-search/`.
-
-Choose workflow subfolders when a domain has clear stages. Examples: `scan/`, `planning/`, `review/`, `delivery/`, `replay/`, `capture/`, `outputs/`.
-
-Avoid creating a new abstraction folder when a rename would solve the confusion. `core/`, `shared/`, and `common/` become junk drawers unless their interface is explicit and small.
-
-## Technology-Aware Rules
-
-Respect documented magic paths. Do not move routes, migrations, static assets, generated clients, config files, package exports, CLI entrypoints, native build files, infra state, or data artifact paths unless official docs and project tests confirm the move.
-
-For React, Next.js, Nuxt, SvelteKit, Astro, Remix, or similar web frameworks, preserve documented routing and asset folders. Improve organization by colocating route-specific code near routes and moving reusable UI into an existing design-system or shared UI area.
-
-For Node packages and monorepos, respect workspace boundaries, package exports, `bin` entrypoints, `src` roots, build output folders, and package scripts. Prefer moving implementation behind stable entrypoints instead of changing every external caller at once.
-
-For Python projects, respect package roots, `src/` layout when present, test discovery rules, console script entrypoints, migration folders, notebooks, and generated caches. Do not make import paths ambiguous.
-
-For Go, Rust, Java, .NET, and similar compiled projects, respect module/package boundaries, public API packages, generated code, build targets, and conventional entrypoint folders such as `cmd/`, `pkg/`, `internal/`, `src/main`, or solution/project files.
-
-For CLI tools and libraries, preserve public commands, package exports, examples, fixtures, and documented import paths. Move internals behind stable public entrypoints.
-
-For data and ML projects, separate source code from datasets, model artifacts, notebooks, evaluation outputs, and generated reports. Do not move large or sensitive data without explicit approval.
-
-For backend frameworks such as Django, Rails, Laravel, Spring, or Phoenix, keep framework-required app/module structure. Organize within the framework's extension points rather than imposing a foreign generic layout.
-
-For infrastructure projects, respect tool state, module source paths, environment overlays, generated plans, and secret files. Separate reusable modules from environment deployments.
+If local docs do not settle conventions, use official documentation for the relevant language, framework, build tool, package manager, database/migration tool, deployment target, or runtime. Prefer docs for the installed major version found in manifests or lockfiles.
 
 ## Migration Strategy
 
 Use small batches:
 
-1. Pick one crowded folder, one domain, or one test family.
-2. Identify consumers: imports, package scripts, CLIs, cron jobs, route paths, docs links, CI, generated state, public URLs.
-3. Decide canonical paths and wrapper paths before moving files.
-4. Move implementation files first, then tests, then docs.
+1. Pick one crowded folder, one concept, one lifecycle split, one test family, one workspace status cleanup, or one package boundary.
+2. Identify consumers: imports, package scripts, CLIs, cron jobs, routes, docs links, CI, generated state, public URLs, persisted data.
+3. Decide canonical paths and stable wrapper paths before moving files.
+4. Move implementation files first, then tests, docs, assets, examples, and generated references.
 5. Leave thin wrappers only for real consumers that cannot move immediately.
 6. Update references with focused searches.
 7. Add or update architecture guards when the old shape is likely to return.
 8. Verify behavior and structure.
 
-Compatibility wrappers should explain the canonical path in one short comment only when the wrapper would otherwise look pointless. Remove wrappers later when no consumer needs them.
+Do not delete by default. For abandoned material, propose one of:
 
-## Approval Gates
+- `archive/` with date or reason.
+- `experiments/` or `sandbox/` for exploratory work.
+- `runtime/` or `artifacts/` with retention rules.
+- A quarantine path for review before deletion.
 
-Ask before applying changes when any of these are true:
+## Compatibility
 
-1. More than one domain or package will move.
-2. Public imports, route paths, CLI commands, cron payloads, package exports, or persisted artifact paths change.
-3. The move touches secrets, auth config, deployment config, migrations, database state, generated retention, or backups.
-4. The framework docs are unclear or conflict with repo conventions.
-5. The only justification is aesthetic rather than evidence-backed maintainability.
+Preserve stable entrypoints when external or habitual consumers exist:
+
+- Keep CLI commands and package exports stable while moving internals.
+- Keep route files as thin delegates when framework paths are public.
+- Keep docs links working through redirects or index pages when readers depend on them.
+- Keep generated output paths stable until the generator and consumers move together.
+- Add wrappers only for real consumers, not for every private file.
+
+Compatibility wrappers should contain only enough code to delegate to the canonical path. Add one short comment only when the wrapper would otherwise look accidental.
 
 ## Verification Checklist
 
-Use the project-native checks first. Typical verification includes:
+Use project-native checks first. Typical verification includes:
 
-1. Search for old paths and names in imports, scripts, docs, config, tests, CI, and runtime payloads.
+1. Search for old paths and names in imports, scripts, docs, config, tests, CI, generated manifests, and runtime payloads.
 2. Run syntax checks for moved scripts.
 3. Run focused tests for the moved area.
-4. Run typecheck, lint, build, route generation, or package export checks when relevant.
-5. Run technology-specific checks such as migration validation, route manifests, package export checks, CLI help, compiler/type checks, notebook smoke checks, data pipeline dry-runs, infra plan validation, or app smoke tests.
+4. Run typecheck, lint, build, package export checks, route generation, docs build, or smoke tests when relevant.
+5. Run domain-specific checks: migration validation, CLI help, notebook smoke checks, data pipeline dry-runs, infra plan validation, link checking, asset pipeline checks, or app smoke tests.
 6. Run `git diff --check` when the project is in git.
-7. Confirm generated/runtime folders were not accidentally committed or moved into source.
+7. Confirm generated/runtime/cache/temp folders were not accidentally moved into source or committed.
 
 ## Red Flags
 
 Treat these as audit signals, not automatic reasons to move:
 
-1. Generic folder with many direct files: `utils`, `helpers`, `common`, `shared`, `services`, `scripts`, `components`.
-2. One folder mixing source, tests, fixtures, generated artifacts, docs, and runtime output.
-3. Multiple domains depending on private files in another domain folder.
-4. Tests grouped flat while source has clear module families.
-5. Docs that describe a concept far away from that concept's code.
-6. Generated output checked into source paths without a documented reason.
-7. Local scripts that duplicate framework or package-manager behavior.
+1. Generic folder with many direct files: `utils`, `helpers`, `common`, `shared`, `services`, `scripts`, `components`, `misc`.
+2. One folder mixes source, tests, fixtures, generated artifacts, docs, runtime output, and temporary work.
+3. A normal feature change cuts across many top-level folders because the project is organized only by technical layer.
+4. Tests are flat while source has clear module families, or source is flat while tests reveal concepts.
+5. Docs that describe a concept live far away from that concept's code or assets.
+6. Generated output, datasets, notebooks, reports, or logs live in source paths without a documented reason.
+7. Local scripts duplicate framework or package-manager behavior without a project-specific reason.
+8. `archive`, `legacy`, `deprecated`, `tmp`, or `experiments` exist without dates, owners, or cleanup expectations.
+9. External repos, forks, client projects, and issue reproductions are mixed into one working directory with active source.
+10. Security-sensitive names appear near reports, examples, fixtures, or committed artifacts.
