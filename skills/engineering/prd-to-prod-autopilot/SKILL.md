@@ -7,13 +7,13 @@ description: Runs an autonomous delivery loop from an existing PRD to implementa
 
 ## Quick start
 
-Given an existing PRD, load the current installed `to-issues` skill, create thin implementation issues, triage them with `triage`, implement every `ready-for-agent` issue with supervised worker agents, verify each slice, start a fresh reviewer/fixer sub-agent for every implemented issue, then run the full repo gate.
+Given an existing PRD, load the current installed `to-issues` skill, create thin implementation issues, triage them with `triage`, implement every `ready-for-agent` issue with supervised worker agents, verify each slice, spawn reviewer/fixer sub-agents that use `review-fix`, then run the full repo gate.
 
 This skill does not create the PRD. The user or another agent workflow owns PRD creation and validation before this autopilot starts.
 
 ## Core Rules
 
-- Compose the current installed skills instead of duplicating their internals: `to-issues`, `triage`, and `diagnose` when checks fail.
+- Compose the current installed skills instead of duplicating their internals: `to-issues`, `triage`, and `diagnose` when checks fail. Delegate post-implementation review to sub-agents that use `review-fix`; the parent autopilot does not load it for itself.
 - Treat those referenced skills as the source of truth for their own steps. This skill only defines ordering, handoffs, state tracking, and completion gates.
 - Use the PRD as the product source of truth. If implementation questions can be answered from the PRD, code, `CONTEXT.md`, or ADRs, answer them from evidence and record the source.
 - If a decision depends on secrets, credentials, legal/business policy, production deploy permissions, irreversible external actions, or product scope not covered by the PRD, stop that slice and mark it `ready-for-human` or blocked with the smallest targeted question.
@@ -65,20 +65,19 @@ This skill does not create the PRD. The user or another agent workflow owns PRD 
 3. If a worker returns incomplete, sandbox-only, or integration-needed work, the parent agent integrates it into the canonical workspace and reruns the slice checks.
 4. Update the issue and state file with verification evidence or a precise blocker.
 
-### 6. Per-Issue Review And Fix Pass
+### 6. Review And Fix Implemented Issues
 
-1. Spawn one fresh reviewer/fixer sub-agent for every implemented `ready-for-agent` issue, preferably not the original worker.
-2. Give each reviewer exactly one issue, the PRD reference, dependencies, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, and verification evidence.
-3. Ask the reviewer to inspect the implementation against the PRD and issue, run or recommend targeted checks, fix problems directly when safely in scope, and return changed files plus evidence.
-4. Run independent review passes in parallel. Serialize reviews that may touch the same risky files, public contracts, migrations, data models, or shared tests.
-5. If a reviewer makes fixes, rerun the issue's relevant checks and update the issue/state file as `review_fixed` only after the evidence is green.
-6. If a reviewer finds a problem that is outside the issue scope or needs a human decision, mark the issue `review_blocked` with evidence and the smallest targeted question.
-7. Do not enter the final gate until every implemented issue is `reviewed`, `review_fixed`, or explicitly blocked.
+1. Spawn one fresh reviewer/fixer sub-agent per implemented `ready-for-agent` issue, preferably not the original worker.
+2. Give each reviewer exactly one issue plus a review packet with the available issue context and verification evidence.
+3. Instruct each reviewer/fixer sub-agent to use `review-fix` for its assigned issue.
+4. Run independent review/fix passes in parallel. Serialize reviews that may touch the same risky files, public contracts, migrations, data models, or shared tests.
+5. Integrate reviewer fixes into the canonical workspace, rerun relevant issue checks, and update the state file as `reviewed`, `review_fixed`, or `review_blocked`.
+6. Do not enter the final gate until every implemented issue is reviewed, fixed, or explicitly blocked.
 
 ### 7. Final Repo Gate
 
 1. Re-run or confirm the full repo checks that matter for the combined change.
 2. Check for cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance criteria coverage.
-3. Confirm every implementable issue is `verified` and every remaining non-implemented issue is explicitly blocked or `ready-for-human`.
+3. Confirm every implementable issue is `verified` and reviewed, and every remaining non-implemented issue is explicitly blocked or `ready-for-human`.
 4. Delete `.scratch/<idea-slug>/idea-autopilot-state.md` only after the full gate passes.
 5. Summarize PRD source, created issues, completed issues, verification commands, remaining blockers, and assumptions accepted during delivery.

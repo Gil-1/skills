@@ -7,7 +7,7 @@ description: Runs an autonomous architecture-deepening loop that turns codebase 
 
 ## Quick start
 
-Run the full loop for the target repo: load `improve-codebase-architecture`, process every candidate through a non-interactive `grill-me` pass, synthesize a PRD with `to-prd`, immediately turn that PRD into implementation issues with `to-issues`, triage them with `triage`, supervise developer sub-agents until every created AFK issue is green or explicitly blocked, then start a fresh reviewer/fixer sub-agent for every implemented issue before the final repo gate.
+Run the full loop for the target repo: load `improve-codebase-architecture`, process every candidate through a non-interactive `grill-me` pass, synthesize a PRD with `to-prd`, immediately turn that PRD into implementation issues with `to-issues`, triage them with `triage`, supervise developer sub-agents until every created AFK issue is green or explicitly blocked, then spawn reviewer/fixer sub-agents that use `review-fix` before the final repo gate.
 
 Full-auto means the user gets one selection checkpoint after the first architecture analysis, then should not be interviewed during the loop unless a true blocker appears. It does not override safety, repo policy, external-action boundaries, or blockers that truly require human input.
 
@@ -18,7 +18,7 @@ Full-auto means the user gets one selection checkpoint after the first architect
 
 ## Core Rules
 
-- Compose the current installed skills instead of duplicating them: `improve-codebase-architecture`, `grill-me`, `to-prd`, `to-issues`, and the workspace developer-loop/subagent supervision playbooks.
+- Compose the current installed skills instead of duplicating them: `improve-codebase-architecture`, `grill-me`, `to-prd`, `to-issues`, `diagnose`, and the workspace developer-loop/subagent supervision playbooks. Delegate post-implementation review to sub-agents that use `review-fix`; the parent autopilot does not load it for itself.
 - Treat those referenced skills as the source of truth for their own steps. This skill only defines ordering, handoffs, state tracking, and completion gates so updates to the underlying skills are picked up when they are loaded.
 - When an underlying skill says to ask the user, answer from code/docs first. If evidence is missing, use the skill's recommended answer and record it as an assumption.
 - If a decision depends on secrets, credentials, production risk, legal/business policy, product direction, or an irreversible external action, do not guess. Surface it as early as possible, then mark the slice HITL, `ready-for-human`, or blocked with the smallest targeted question.
@@ -91,17 +91,16 @@ For each architecture candidate:
 9. Do not claim completion from progress text alone. Require a terminal handoff, changed files when code changed, and verification evidence.
 10. If a supervised worker returns `needs_integration` or only references sandbox-local artifacts, the parent must integrate or convert those artifacts into the canonical workspace, rerun verification, and only then mark the issue `verified`.
 
-### 8. Per-Issue Review And Fix Pass
+### 8. Review And Fix Implemented Issues
 
 After implementation and slice verification:
 
-1. Spawn one fresh reviewer/fixer sub-agent for every implemented `ready-for-agent` issue, preferably not the original worker.
-2. Give each reviewer exactly one issue, the PRD/candidate context, acceptance criteria, worker handoff, changed files, relevant diff, and verification evidence.
-3. Ask the reviewer to inspect the work against the issue and architecture goal, run or recommend targeted checks, fix problems directly when safely in scope, and return changed files plus evidence.
-4. Run independent review passes in parallel. Serialize reviews that may touch the same risky files, public contracts, migrations, data models, or shared tests.
-5. If a reviewer makes fixes, rerun the issue's relevant checks and update the issue/state file as `review_fixed` only after the evidence is green.
-6. If a reviewer finds a problem that is outside the issue scope or needs a human decision, mark the issue `review_blocked` with evidence and the smallest targeted question.
-7. Do not enter the final gate until every implemented issue is `reviewed`, `review_fixed`, or explicitly blocked.
+1. Spawn one fresh reviewer/fixer sub-agent per implemented `ready-for-agent` issue, preferably not the original worker.
+2. Give each reviewer exactly one issue plus a review packet with the available issue context and verification evidence.
+3. Instruct each reviewer/fixer sub-agent to use `review-fix` for its assigned issue.
+4. Run independent review/fix passes in parallel. Serialize reviews that may touch the same risky files, public contracts, migrations, data models, or shared tests.
+5. Integrate reviewer fixes into the canonical workspace, rerun relevant issue checks, and update the autopilot state as `reviewed`, `review_fixed`, or `review_blocked`.
+6. Do not enter the final gate until every implemented issue is reviewed, fixed, or explicitly blocked.
 
 ### 9. Integration And Final Gate
 
@@ -110,6 +109,6 @@ Before reporting success:
 1. Re-run or confirm the repo-level checks that matter for the combined changes.
 2. Check for cross-issue conflicts, duplicated abstractions, migration gaps, and whether the original architecture goal actually landed.
 3. Audit sub-agent records for stale, failed, or missing handoffs.
-4. Confirm every `ready-for-agent` issue is completed, relevant tests/build/lint/smoke checks are valid, and there is enough evidence that the project is working and nothing important broke.
+4. Confirm every `ready-for-agent` issue is completed and reviewed, relevant tests/build/lint/smoke checks are valid, and there is enough evidence that the project is working and nothing important broke.
 5. If everything is green, delete only the temporary autopilot state file. Keep the PRD, issues, docs, and durable decision records.
 6. Summarize: PRD path, created issues, completed issues, verification commands, remaining HITL/blockers, and assumptions accepted during grilling.

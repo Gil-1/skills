@@ -18,6 +18,7 @@ This installs:
 
 - `architecture-autopilot` - turns architecture improvement candidates into decisions, a PRD, issues, implementation work, and verification.
 - `prd-to-prod-autopilot` - turns an existing PRD into implementation issues, triages them, supervises delivery, and verifies the repo.
+- `review-fix` - guides a per-issue reviewer/fixer pass that uses `diagnose` for defects before final validation.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 
 ## Matt Pocock Dependencies
