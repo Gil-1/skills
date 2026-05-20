@@ -20,6 +20,9 @@ This installs:
 - `prd-to-prod-autopilot` - turns an existing PRD into implementation issues, triages them, supervises delivery, and verifies the repo.
 - `review-fix` - guides a per-issue reviewer/fixer pass that uses `diagnose` for defects before final validation.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
+- `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
+- `project-architecture-report` - creates a standalone HTML architecture report for v2 planning.
+- `game-improvement-loop` - runs validated Shellsong game-improvement cycles through PRD, implementation, and playtest evidence.
 
 ## Matt Pocock Dependencies
 
