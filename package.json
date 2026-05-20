@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "link": "node scripts/link-skills.mjs",
     "link:dry-run": "node scripts/link-skills.mjs --dry-run",
     "deps": "node scripts/link-skills.mjs --deps-only",
