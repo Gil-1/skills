@@ -1,6 +1,6 @@
 ---
 name: game-improvement-loop
-description: Runs iterative game-improvement cycles from a player-experience goal: investigate, validate direction, create a PRD, implement, playtest, and feed observations into the next cycle. Use when the user asks to improve game feel, UX, player experience, character/system behavior, or playtest-driven iteration.
+description: "Runs iterative game-improvement cycles from a player-experience goal: investigate, validate direction, create a PRD, implement, playtest, and feed observations into the next cycle. Use when the user asks to improve game feel, UX, player experience, character/system behavior, or playtest-driven iteration."
 ---
 
 # Game Improvement Loop
