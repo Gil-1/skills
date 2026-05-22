@@ -22,16 +22,17 @@ This installs:
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
+- `grill-with-docs-autopilot` - turns `grill-with-docs` into a docs-first decision report instead of a question-by-question interview.
 - `game-improvement-loop` - runs validated Shellsong game-improvement cycles through PRD, implementation, and playtest evidence.
 
 ## Matt Pocock Dependencies
 
-The autopilot skills depend on a few Matt Pocock skills, including `improve-codebase-architecture`, `to-prd`, `to-issues`, `triage`, and `diagnose`.
+The autopilot skills depend on a few Matt Pocock skills, including `improve-codebase-architecture`, `grill-with-docs`, `to-prd`, `to-issues`, `triage`, and `diagnose`.
 
 Install or refresh those dependencies with:
 
 ```bash
-npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill improve-codebase-architecture --skill grill-me --skill to-prd --skill to-issues --skill triage --skill diagnose -y
+npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill improve-codebase-architecture --skill grill-me --skill grill-with-docs --skill to-prd --skill to-issues --skill triage --skill diagnose -y
 ```
 
 Run `/setup-matt-pocock-skills` once inside your agent for each project you want to use these workflows on.

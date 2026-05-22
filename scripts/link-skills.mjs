@@ -10,6 +10,7 @@ const mattPocockDependencies = [
   "setup-matt-pocock-skills",
   "improve-codebase-architecture",
   "grill-me",
+  "grill-with-docs",
   "to-prd",
   "to-issues",
   "triage",
