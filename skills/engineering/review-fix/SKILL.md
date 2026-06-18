@@ -1,17 +1,17 @@
 ---
 name: review-fix
-description: Guides a focused post-implementation review and fix pass for one completed issue. Use when Codex or a sub-agent is assigned one implemented issue to inspect against its brief, report review findings, and fix in-scope defects by loading the diagnose skill.
+description: Guides a focused post-implementation review and fix pass for one completed issue. Use when Codex or a sub-agent is assigned one implemented issue to inspect against its brief, report review findings, and fix in-scope defects by loading the diagnosing-bugs skill.
 ---
 
 # Review Fix
 
 ## Quick start
 
-Review one implemented issue against the review packet from the parent agent. If you find an in-scope defect, regression, failing check, or unclear failure, load `diagnose` and follow that skill instead of inventing a separate fix process. Return concise findings, fixes, changed files, verification evidence, and any blocker.
+Review one implemented issue against the review packet from the parent agent. If you find an in-scope defect, regression, failing check, or unclear failure, load `diagnosing-bugs` and follow that skill instead of inventing a separate fix process. Return concise findings, fixes, changed files, verification evidence, and any blocker.
 
 ## Core Rules
 
-- Compose `diagnose` for fixes. This skill decides when a fix is needed; `diagnose` defines how to debug and fix it.
+- Compose `diagnosing-bugs` for fixes. This skill decides when a fix is needed; `diagnosing-bugs` defines how to debug and fix it.
 - Review only the assigned issue. Flag oversized or cross-issue concerns instead of broadening ownership.
 - State whether you were the original implementer if that matters for review independence.
 - Return a handoff instead of managing shared issue state, tracker labels, or final integration unless explicitly assigned.
@@ -42,8 +42,8 @@ Check:
 
 When you find a defect or a check fails:
 
-1. Load `diagnose`.
-2. Follow `diagnose` for the debug/fix loop.
+1. Load `diagnosing-bugs`.
+2. Follow `diagnosing-bugs` for the debug/fix loop.
 3. Keep the fix inside the assigned issue scope.
 4. Retest the targeted check and any affected acceptance criteria.
 

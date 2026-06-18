@@ -14,7 +14,7 @@ Run this skill as a conductor, not as a replacement for the skills it calls. Sta
 - `to-issues` owns vertical issue breakdown and issue publication.
 - `triage` owns label/state transitions and durable agent briefs. Treat it as the source of truth for `ready-for-agent`.
 - Worker sub-agents own implementation of one assigned `ready-for-agent` issue.
-- `diagnose` owns failed-check debugging.
+- `diagnosing-bugs` owns failed-check debugging.
 - `review-fix` owns the post-implementation review/fix pass for one issue.
 - The parent autopilot owns sequencing, run state, concurrency, sub-agent handoffs, integration into the canonical workspace, and final gates.
 
@@ -35,7 +35,7 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 2. Create issues: load `to-issues` with the PRD. Let it draft/publish the vertical slices and dependency relationships. Record the resulting issue manifest.
 3. Triage issues: load `triage` for the created issues. Let it apply labels/states and create agent briefs. Record which issues are ready for agents, human-owned, blocked, or waiting for info.
 4. Schedule workers: run independent `ready-for-agent` issues through supervised worker sub-agents when the current agent environment allows it. Serialize issues that likely touch the same risky files, public contracts, migrations, data models, or shared tests.
-5. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When a check fails, load `diagnose` in the worker or parent context and follow it.
+5. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it.
 6. Review and fix: assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Integrate fixes, rerun relevant checks, and record review status.
 7. Run the final gate: rerun or confirm repo-level checks, audit PRD/issue coverage and blockers, verify no sub-agent handoff is stale or missing, then summarize the run.
 

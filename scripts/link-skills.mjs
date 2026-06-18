@@ -8,12 +8,22 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 const mattPocockDependencies = [
   "setup-matt-pocock-skills",
+  "ask-matt",
   "improve-codebase-architecture",
+  "codebase-design",
+  "domain-modeling",
   "grill-me",
+  "grill-with-docs",
   "to-prd",
   "to-issues",
   "triage",
-  "diagnose",
+  "diagnosing-bugs",
+  "prototype",
+  "tdd",
+  "handoff",
+  "grilling",
+  "writing-great-skills",
+  "resolving-merge-conflicts",
 ];
 
 const usage = `Usage:
@@ -217,7 +227,7 @@ if (options.installDependencies) {
     buildAddArgs("mattpocock/skills", {
       ...options,
       skills: mattPocockDependencies,
-      fullDepth: false,
+      fullDepth: true,
     }),
     options.dryRun,
   );
