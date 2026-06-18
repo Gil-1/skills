@@ -4,7 +4,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 
 const mattPocockDependencies = [
   "setup-matt-pocock-skills",
@@ -168,6 +169,20 @@ function npxCommand() {
   return process.platform === "win32" ? "npx.cmd" : "npx";
 }
 
+function createNpxInvocation(args) {
+  if (process.platform === "win32") {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/c", npxCommand(), ...args],
+    };
+  }
+
+  return {
+    command: npxCommand(),
+    args,
+  };
+}
+
 function buildAddArgs(source, { agents, skills, global, copy, fullDepth }) {
   const args = ["--yes", "skills@latest", "add", source];
 
@@ -205,7 +220,8 @@ function run(label, args, dryRun) {
     return;
   }
 
-  const result = spawnSync(npxCommand(), args, {
+  const invocation = createNpxInvocation(args);
+  const result = spawnSync(invocation.command, invocation.args, {
     stdio: "inherit",
     shell: false,
   });
@@ -219,28 +235,36 @@ function run(label, args, dryRun) {
   }
 }
 
-const options = parseArgs(process.argv.slice(2));
+function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
 
-if (options.installDependencies) {
-  run(
-    "Installing Matt Pocock skill dependencies",
-    buildAddArgs("mattpocock/skills", {
-      ...options,
-      skills: mattPocockDependencies,
-      fullDepth: true,
-    }),
-    options.dryRun,
-  );
+  if (options.installDependencies) {
+    run(
+      "Installing Matt Pocock skill dependencies",
+      buildAddArgs("mattpocock/skills", {
+        ...options,
+        skills: mattPocockDependencies,
+        fullDepth: true,
+      }),
+      options.dryRun,
+    );
+  }
+
+  if (!options.depsOnly) {
+    run(
+      "Linking local skills",
+      buildAddArgs(options.source, {
+        ...options,
+        skills: options.skills,
+        fullDepth: true,
+      }),
+      options.dryRun,
+    );
+  }
 }
 
-if (!options.depsOnly) {
-  run(
-    "Linking local skills",
-    buildAddArgs(options.source, {
-      ...options,
-      skills: options.skills,
-      fullDepth: true,
-    }),
-    options.dryRun,
-  );
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
+  main();
 }
+
+export { createNpxInvocation };
