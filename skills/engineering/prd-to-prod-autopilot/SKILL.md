@@ -16,6 +16,7 @@ Run this skill as a conductor, not as a replacement for the skills it calls. Sta
 - Worker sub-agents own implementation of one assigned `ready-for-agent` issue.
 - `diagnosing-bugs` owns failed-check debugging.
 - `review-fix` owns the post-implementation review/fix pass for one issue.
+- `codex-pr-review` owns the post-push Codex PR review loop when a PR exists and the user asks for automated Codex validation.
 - The parent autopilot owns sequencing, run state, concurrency, sub-agent handoffs, integration into the canonical workspace, and final gates.
 
 If a referenced skill explains how to do a task, load that skill and follow it instead of duplicating its mechanics here.
@@ -26,7 +27,7 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 - Answer skill approval checkpoints from evidence when the user asked for autopilot and no true human decision is required.
 - Treat secrets, credentials, legal/business policy, deploy permission, irreversible external actions, and product scope gaps as blockers.
 - Mark blocked work as `needs-info`, `ready-for-human`, or blocked with the smallest targeted question.
-- Production-ready means implemented and validated in the repo. Do not deploy, publish, push, create PRs, run shared migrations, or perform external side effects unless the user or repo policy explicitly asks for them.
+- Production-ready means implemented and validated in the repo. Do not deploy, publish, push, create PRs, run shared migrations, or perform external side effects unless the user or repo policy explicitly asks for them. If a PR exists and the user wants automated Codex review, load `codex-pr-review` after the push.
 - Keep temporary state at `.scratch/<run-slug>/prd-to-prod-autopilot-state.md`. Update it after each phase. Keep it on failure or blockage; delete it only after the final gate succeeds.
 
 ## Run Loop
