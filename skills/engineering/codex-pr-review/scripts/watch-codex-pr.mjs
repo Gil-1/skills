@@ -54,6 +54,14 @@ query WatchCodexPullRequest(
           author {
             login
           }
+          reactions(first: 10) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+          }
         }
         pageInfo {
           hasNextPage
@@ -86,6 +94,14 @@ query WatchCodexPullRequest(
               author {
                 login
               }
+              reactions(first: 10) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
+              }
             }
             pageInfo {
               hasNextPage
@@ -114,6 +130,14 @@ query WatchCodexPullRequest(
               updatedAt
               author {
                 login
+              }
+              reactions(first: 10) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
               }
             }
             pageInfo {
@@ -149,6 +173,14 @@ query WatchCodexReviewComments($id: ID!, $cursor: String) {
           author {
             login
           }
+          reactions(first: 10) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+          }
         }
         pageInfo {
           hasNextPage
@@ -176,6 +208,14 @@ query WatchCodexThreadComments($id: ID!, $cursor: String) {
           updatedAt
           author {
             login
+          }
+          reactions(first: 10) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
           }
         }
         pageInfo {
@@ -408,8 +448,8 @@ function summarize(pr) {
     ...freshFeedbackItems.map(feedbackItemTimestamp),
     ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
   );
-  const approvalFreshAfter = newestTimestamp(statusFreshAfter, freshFeedbackAt);
-  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter);
+  const approvalFreshAfter = newestTimestamp(statusFreshAfter, currentHeadReview?.submittedAt, freshFeedbackAt);
+  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, Boolean(currentHeadReview));
 
   return {
     number: pr.number,
@@ -452,13 +492,13 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions, statusFreshAfter) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter, currentHeadReviewed) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
     .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
-  if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
+  if (newestStatusReaction?.content === "THUMBS_UP" && currentHeadReviewed) return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
   if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
     return "other-reaction";
@@ -503,10 +543,11 @@ function isFreshTimestamp(timestamp, statusFreshAfter) {
   if (!statusFreshAfter) return true;
   const value = Date.parse(timestamp ?? "");
   const boundary = Date.parse(statusFreshAfter);
-  return !Number.isNaN(value) && !Number.isNaN(boundary) && value > boundary;
+  return !Number.isNaN(value) && !Number.isNaN(boundary) && value >= boundary;
 }
 
 function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
+  if (item.validityReaction) return false;
   if (item.reviewedCommitOid && headRefOid) {
     return commitMatchesHead(item.reviewedCommitOid, headRefOid)
       && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
@@ -590,7 +631,19 @@ function summarizeItem(kind, item) {
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     hasBody: Boolean(item.body?.trim()),
+    validityReaction: validityReaction(item.reactions?.nodes ?? []),
   };
+}
+
+function validityReaction(reactions) {
+  return reactions
+    .map((reaction) => ({
+      content: normalizeReaction(reaction.content),
+      user: reaction.user?.login,
+    }))
+    .find((reaction) =>
+      ["THUMBS_UP", "THUMBS_DOWN"].includes(reaction.content) && !isCodexBotLogin(reaction.user),
+    ) ?? null;
 }
 
 function fingerprint(summary) {
@@ -607,6 +660,7 @@ function fingerprint(summary) {
       item.state,
       item.updatedAt,
       item.hasBody,
+      item.validityReaction?.content,
       item.path,
       item.line,
     ]),
@@ -620,8 +674,8 @@ function fingerprint(summary) {
 }
 
 function immediateEvent(snapshot) {
-  if (snapshot.status === "approved") return "codex_approved";
   if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
+  if (snapshot.status === "approved") return "codex_approved";
   return undefined;
 }
 
