@@ -34,6 +34,31 @@ query WatchCodexPullRequest(
       headRefOid
       baseRefName
       mergeStateStatus
+      commits(last: 1) {
+        nodes {
+          commit {
+            oid
+            pushedDate
+          }
+        }
+      }
+      timelineItems(last: 100, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
+        nodes {
+          __typename
+          ... on PullRequestCommit {
+            commit {
+              oid
+            }
+          }
+          ... on IssueComment {
+            body
+            createdAt
+            author {
+              login
+            }
+          }
+        }
+      }
       reactions(first: 100, after: $reactionCursor) {
         nodes {
           content
@@ -63,6 +88,10 @@ query WatchCodexPullRequest(
               user {
                 login
               }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
             }
           }
         }
@@ -104,6 +133,10 @@ query WatchCodexPullRequest(
                     login
                   }
                 }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
               }
             }
             pageInfo {
@@ -140,6 +173,10 @@ query WatchCodexPullRequest(
                   user {
                     login
                   }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
                 }
               }
             }
@@ -183,6 +220,10 @@ query WatchCodexReviewComments($id: ID!, $cursor: String) {
                 login
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
         }
         pageInfo {
@@ -219,6 +260,45 @@ query WatchCodexThreadComments($id: ID!, $cursor: String) {
                 login
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+`;
+
+const COMMENT_REACTIONS_QUERY = `
+query WatchCodexCommentReactions($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on IssueComment {
+      reactions(first: 100, after: $cursor) {
+        nodes {
+          content
+          user {
+            login
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+    ... on PullRequestReviewComment {
+      reactions(first: 100, after: $cursor) {
+        nodes {
+          content
+          user {
+            login
           }
         }
         pageInfo {
@@ -356,6 +436,7 @@ async function readSnapshot(target) {
   pr.reviewThreads = await readConnectionPages(target, pr.reviewThreads, "reviewThreads", "threadCursor");
   await readNestedCommentPages(pr.reviews?.nodes ?? [], REVIEW_COMMENTS_QUERY);
   await readNestedCommentPages(pr.reviewThreads?.nodes ?? [], THREAD_COMMENTS_QUERY);
+  await readAllCommentReactionPages(pr);
 
   return summarize(pr);
 }
@@ -381,6 +462,22 @@ async function readConnectionPages(target, initialConnection, connectionName, cu
 async function readNestedCommentPages(nodes, query) {
   for (const node of nodes) {
     node.comments = await readNodeConnectionPages(query, node.id, node.comments, "comments");
+  }
+}
+
+async function readAllCommentReactionPages(pr) {
+  await readCommentReactionPages(pr.comments?.nodes ?? []);
+  for (const review of pr.reviews?.nodes ?? []) {
+    await readCommentReactionPages(review.comments?.nodes ?? []);
+  }
+  for (const thread of pr.reviewThreads?.nodes ?? []) {
+    await readCommentReactionPages(thread.comments?.nodes ?? []);
+  }
+}
+
+async function readCommentReactionPages(comments) {
+  for (const comment of comments) {
+    comment.reactions = await readNodeConnectionPages(COMMENT_REACTIONS_QUERY, comment.id, comment.reactions, "reactions");
   }
 }
 
@@ -414,7 +511,8 @@ async function readNodeConnectionPages(query, nodeId, initialConnection, connect
 function summarize(pr) {
   const latestReviewRequestAt = latestCodexReviewRequestAt(pr.comments?.nodes ?? []);
   const currentHeadReview = latestCurrentHeadCodexReview(pr.reviews?.nodes ?? [], pr.headRefOid, latestReviewRequestAt);
-  const statusFreshAfter = latestReviewRequestAt;
+  const headRefPushedAt = latestHeadCommitPushedAt(pr);
+  const statusFreshAfter = newestTimestamp(latestReviewRequestAt, headRefPushedAt);
   const bodyReactions = (pr.reactions?.nodes ?? [])
     .filter((reaction) => isCodexBotLogin(reaction.user?.login))
     .map((reaction) => ({
@@ -452,7 +550,9 @@ function summarize(pr) {
     ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
   );
   const approvalFreshAfter = newestTimestamp(statusFreshAfter, currentHeadReview?.submittedAt, freshFeedbackAt);
-  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, Boolean(currentHeadReview));
+  const approvalMatchesCurrentHead = Boolean(currentHeadReview)
+    || reviewRequestCoversHead(pr, latestReviewRequestAt, headRefPushedAt);
+  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, approvalMatchesCurrentHead);
 
   return {
     number: pr.number,
@@ -461,11 +561,13 @@ function summarize(pr) {
     headRefOid: pr.headRefOid,
     baseRefName: pr.baseRefName,
     mergeStateStatus: pr.mergeStateStatus,
+    headRefPushedAt,
     latestReviewRequestAt,
     currentHeadReview,
     statusFreshAfter,
     freshFeedbackAt,
     approvalFreshAfter,
+    approvalMatchesCurrentHead,
     status,
     bodyReactions,
     feedbackItems,
@@ -476,8 +578,10 @@ function summarize(pr) {
     freshActiveCodexThreadCount: freshActiveCodexThreads.length,
     fingerprint: fingerprint({
       headRefOid: pr.headRefOid,
+      headRefPushedAt,
       statusFreshAfter,
       approvalFreshAfter,
+      approvalMatchesCurrentHead,
       status,
       bodyReactions,
       feedbackItems,
@@ -495,13 +599,13 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions, statusFreshAfter, currentHeadReviewed) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter, approvalMatchesCurrentHead) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
     .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
-  if (newestStatusReaction?.content === "THUMBS_UP" && currentHeadReviewed) return "approved";
+  if (newestStatusReaction?.content === "THUMBS_UP" && approvalMatchesCurrentHead) return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
   if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
     return "other-reaction";
@@ -509,12 +613,46 @@ function codexStatusFromReactions(bodyReactions, statusFreshAfter, currentHeadRe
   return "none";
 }
 
+function latestHeadCommitPushedAt(pr) {
+  return (pr.commits?.nodes ?? []).at(-1)?.commit?.pushedDate ?? null;
+}
+
+function reviewRequestCoversHead(pr, latestReviewRequestAt, headRefPushedAt) {
+  if (!latestReviewRequestAt) return false;
+  if (headRefPushedAt && isFreshTimestamp(latestReviewRequestAt, headRefPushedAt)) return true;
+  return reviewRequestFollowsHeadCommit(pr, latestReviewRequestAt);
+}
+
+function reviewRequestFollowsHeadCommit(pr, latestReviewRequestAt) {
+  const latestReviewRequestTime = Date.parse(latestReviewRequestAt);
+  if (Number.isNaN(latestReviewRequestTime)) return false;
+  let currentHeadIndex = -1;
+  let latestReviewRequestIndex = -1;
+  for (const [index, item] of (pr.timelineItems?.nodes ?? []).entries()) {
+    if (item.__typename === "PullRequestCommit" && commitMatchesHead(item.commit?.oid, pr.headRefOid)) {
+      currentHeadIndex = index;
+    }
+    if (
+      item.__typename === "IssueComment"
+      && isCodexReviewRequest(item)
+      && Date.parse(item.createdAt ?? "") === latestReviewRequestTime
+    ) {
+      latestReviewRequestIndex = index;
+    }
+  }
+  return currentHeadIndex >= 0 && latestReviewRequestIndex > currentHeadIndex;
+}
+
 function latestCodexReviewRequestAt(comments) {
   return newestTimestamp(
     ...comments
-      .filter((comment) => /^\s*@codex\s+review\s*$/i.test(comment.body ?? ""))
+      .filter(isCodexReviewRequest)
       .map((comment) => comment.createdAt),
   );
+}
+
+function isCodexReviewRequest(comment) {
+  return /^\s*@codex\s+review\s*$/i.test(comment.body ?? "");
 }
 
 function latestCurrentHeadCodexReview(reviews, headRefOid, latestReviewRequestAt) {
@@ -579,7 +717,7 @@ function collectFeedbackItems(pr) {
   }
 
   for (const review of pr.reviews?.nodes ?? []) {
-    if (isCodexBotLogin(review.author?.login)) {
+    if (isCodexBotLogin(review.author?.login) && reviewHasActionableBody(review)) {
       items.push({
         kind: "review",
         id: review.id,
@@ -604,6 +742,12 @@ function collectFeedbackItems(pr) {
   }
 
   return items.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
+}
+
+function reviewHasActionableBody(review) {
+  const body = review.body?.trim() ?? "";
+  if (!body) return false;
+  return !(/Codex Review/i.test(body) && /automated review suggestions/i.test(body) && /Reviewed commit:/i.test(body));
 }
 
 function isCodexBotLogin(login) {
@@ -658,8 +802,10 @@ function validityReaction(reactions, handlerLogin) {
 function fingerprint(summary) {
   return JSON.stringify({
     headRefOid: summary.headRefOid,
+    headRefPushedAt: summary.headRefPushedAt,
     statusFreshAfter: summary.statusFreshAfter,
     approvalFreshAfter: summary.approvalFreshAfter,
+    approvalMatchesCurrentHead: summary.approvalMatchesCurrentHead,
     status: summary.status,
     bodyReactions: summary.bodyReactions.map((reaction) => `${reaction.content}:${reaction.createdAt}`),
     mergeStateStatus: summary.mergeStateStatus,
