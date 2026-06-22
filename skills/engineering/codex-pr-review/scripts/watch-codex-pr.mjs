@@ -14,14 +14,31 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 const STATUS_REACTION_CONTENTS = new Set(["EYES", "THUMBS_UP"]);
 
 const QUERY = `
-query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $reactionCursor: String) {
+query WatchCodexPullRequest(
+  $owner: String!,
+  $name: String!,
+  $number: Int!,
+  $reactionCursor: String,
+  $commentCursor: String,
+  $reviewCursor: String,
+  $threadCursor: String
+) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
       url
       headRefName
+      headRefOid
       baseRefName
       mergeStateStatus
+      commits(last: 1) {
+        nodes {
+          commit {
+            oid
+            committedDate
+          }
+        }
+      }
       reactions(first: 100, after: $reactionCursor) {
         nodes {
           content
@@ -35,7 +52,7 @@ query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $rea
           endCursor
         }
       }
-      comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      comments(first: 100, after: $commentCursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
           id
           url
@@ -46,8 +63,12 @@ query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $rea
             login
           }
         }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
-      reviews(first: 100) {
+      reviews(first: 100, after: $reviewCursor) {
         nodes {
           id
           url
@@ -71,10 +92,18 @@ query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $rea
                 login
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
         }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $threadCursor) {
         nodes {
           id
           isResolved
@@ -92,7 +121,15 @@ query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $rea
                 login
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
         }
       }
     }
@@ -193,7 +230,7 @@ async function currentRepo() {
   return repo.nameWithOwner;
 }
 
-async function readPullRequestPage(target, reactionCursor) {
+async function readPullRequestPage(target, cursors = {}) {
   const args = [
     "api",
     "graphql",
@@ -206,7 +243,9 @@ async function readPullRequestPage(target, reactionCursor) {
     "-F",
     `number=${target.number}`,
   ];
-  if (reactionCursor) args.push("-F", `reactionCursor=${reactionCursor}`);
+  for (const [name, cursor] of Object.entries(cursors)) {
+    if (cursor) args.push("-F", `${name}=${cursor}`);
+  }
 
   const response = await ghJson(args);
   const pr = response?.data?.repository?.pullRequest;
@@ -216,25 +255,36 @@ async function readPullRequestPage(target, reactionCursor) {
 
 async function readSnapshot(target) {
   const pr = await readPullRequestPage(target);
-  const reactions = [...(pr.reactions?.nodes ?? [])];
-  let pageInfo = pr.reactions?.pageInfo;
-
-  while (pageInfo?.hasNextPage) {
-    const nextPr = await readPullRequestPage(target, pageInfo.endCursor);
-    reactions.push(...(nextPr.reactions?.nodes ?? []));
-    pageInfo = nextPr.reactions?.pageInfo;
-  }
-
-  pr.reactions = {
-    ...(pr.reactions ?? {}),
-    nodes: reactions,
-    pageInfo,
-  };
+  pr.reactions = await readConnectionPages(target, pr.reactions, "reactions", "reactionCursor");
+  pr.comments = await readConnectionPages(target, pr.comments, "comments", "commentCursor");
+  pr.reviews = await readConnectionPages(target, pr.reviews, "reviews", "reviewCursor");
+  pr.reviewThreads = await readConnectionPages(target, pr.reviewThreads, "reviewThreads", "threadCursor");
 
   return summarize(pr);
 }
 
+async function readConnectionPages(target, initialConnection, connectionName, cursorName) {
+  const nodes = [...(initialConnection?.nodes ?? [])];
+  let pageInfo = initialConnection?.pageInfo;
+
+  while (pageInfo?.hasNextPage) {
+    const nextPr = await readPullRequestPage(target, { [cursorName]: pageInfo.endCursor });
+    const nextConnection = nextPr[connectionName];
+    nodes.push(...(nextConnection?.nodes ?? []));
+    pageInfo = nextConnection?.pageInfo;
+  }
+
+  return {
+    ...(initialConnection ?? {}),
+    nodes,
+    pageInfo,
+  };
+}
+
 function summarize(pr) {
+  const headCommit = (pr.commits?.nodes ?? []).at(-1)?.commit;
+  const latestReviewRequestAt = latestCodexReviewRequestAt(pr.comments?.nodes ?? []);
+  const statusFreshAfter = newestTimestamp(headCommit?.committedDate, latestReviewRequestAt);
   const bodyReactions = (pr.reactions?.nodes ?? [])
     .filter((reaction) => reaction.user?.login === BOT_LOGIN)
     .map((reaction) => ({
@@ -243,7 +293,7 @@ function summarize(pr) {
     }))
     .sort(compareByDateThenContent);
 
-  const status = codexStatusFromReactions(bodyReactions);
+  const status = codexStatusFromReactions(bodyReactions, statusFreshAfter);
 
   const feedbackItems = collectFeedbackItems(pr);
   const activeCodexThreads = (pr.reviewThreads?.nodes ?? [])
@@ -258,20 +308,41 @@ function summarize(pr) {
         .map((comment) => summarizeItem("thread_comment", comment)),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
+  const freshFeedbackItems = feedbackItems.filter((item) =>
+    feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+  );
+  const freshActiveCodexThreads = activeCodexThreads.filter((thread) =>
+    thread.comments.some((comment) =>
+      feedbackItemIsFresh(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+    ),
+  );
 
   return {
     number: pr.number,
     url: pr.url,
     headRefName: pr.headRefName,
+    headRefOid: pr.headRefOid,
+    headCommit: headCommit
+      ? {
+          oid: headCommit.oid,
+          committedDate: headCommit.committedDate,
+        }
+      : null,
     baseRefName: pr.baseRefName,
     mergeStateStatus: pr.mergeStateStatus,
+    latestReviewRequestAt,
+    statusFreshAfter,
     status,
     bodyReactions,
     feedbackItems,
     activeCodexThreads,
     feedbackCount: feedbackItems.length,
     activeCodexThreadCount: activeCodexThreads.length,
+    freshFeedbackCount: freshFeedbackItems.length,
+    freshActiveCodexThreadCount: freshActiveCodexThreads.length,
     fingerprint: fingerprint({
+      headRefOid: pr.headRefOid,
+      statusFreshAfter,
       status,
       bodyReactions,
       feedbackItems,
@@ -289,15 +360,50 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
+    .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
   if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
-  if (bodyReactions.length > 0) return "other-reaction";
+  if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
+    return "other-reaction";
+  }
   return "none";
+}
+
+function latestCodexReviewRequestAt(comments) {
+  return newestTimestamp(
+    ...comments
+      .filter((comment) => /^\s*@codex\s+review\s*$/i.test(comment.body ?? ""))
+      .map((comment) => comment.createdAt),
+  );
+}
+
+function newestTimestamp(...timestamps) {
+  const sorted = timestamps
+    .filter(Boolean)
+    .map((timestamp) => new Date(timestamp))
+    .filter((date) => !Number.isNaN(date.valueOf()))
+    .sort((a, b) => a.valueOf() - b.valueOf());
+  return sorted.at(-1)?.toISOString();
+}
+
+function isFreshTimestamp(timestamp, statusFreshAfter) {
+  if (!statusFreshAfter) return true;
+  const value = Date.parse(timestamp ?? "");
+  const boundary = Date.parse(statusFreshAfter);
+  return !Number.isNaN(value) && !Number.isNaN(boundary) && value > boundary;
+}
+
+function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
+  if (item.reviewedCommitOid && headRefOid) {
+    const matchesHead = headRefOid.startsWith(item.reviewedCommitOid) || item.reviewedCommitOid.startsWith(headRefOid);
+    return matchesHead && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
+  }
+  return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
 }
 
 function collectFeedbackItems(pr) {
@@ -316,6 +422,7 @@ function collectFeedbackItems(pr) {
         state: review.state,
         updatedAt: review.submittedAt,
         hasBody: Boolean(review.body?.trim()),
+        reviewedCommitOid: parseReviewedCommitOid(review.body),
       });
     }
     for (const comment of review.comments?.nodes ?? []) {
@@ -333,6 +440,12 @@ function collectFeedbackItems(pr) {
   return items.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
 }
 
+function parseReviewedCommitOid(body) {
+  return body?.match(/Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`/i)?.[1]
+    ?? body?.match(/Reviewed commit:\s*`([0-9a-f]{7,40})`/i)?.[1]
+    ?? null;
+}
+
 function summarizeItem(kind, item) {
   return {
     kind,
@@ -346,6 +459,8 @@ function summarizeItem(kind, item) {
 
 function fingerprint(summary) {
   return JSON.stringify({
+    headRefOid: summary.headRefOid,
+    statusFreshAfter: summary.statusFreshAfter,
     status: summary.status,
     bodyReactions: summary.bodyReactions.map((reaction) => `${reaction.content}:${reaction.createdAt}`),
     mergeStateStatus: summary.mergeStateStatus,
@@ -369,7 +484,7 @@ function fingerprint(summary) {
 
 function immediateEvent(snapshot) {
   if (snapshot.status === "approved") return "codex_approved";
-  if (snapshot.feedbackCount > 0 || snapshot.activeCodexThreadCount > 0) return "codex_feedback_changed";
+  if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   return undefined;
 }
 
