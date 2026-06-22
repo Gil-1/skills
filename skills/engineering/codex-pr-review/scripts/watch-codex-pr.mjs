@@ -713,7 +713,9 @@ function collectFeedbackItems(pr) {
   const items = [];
 
   for (const comment of pr.comments?.nodes ?? []) {
-    if (isCodexBotLogin(comment.author?.login)) items.push(summarizeItem("pr_comment", comment, pr.viewerLogin));
+    if (isCodexBotLogin(comment.author?.login) && commentHasActionableBody(comment)) {
+      items.push(summarizeItem("pr_comment", comment, pr.viewerLogin));
+    }
   }
 
   for (const review of pr.reviews?.nodes ?? []) {
@@ -748,6 +750,12 @@ function reviewHasActionableBody(review) {
   const body = review.body?.trim() ?? "";
   if (!body) return false;
   return !(/Codex Review/i.test(body) && /automated review suggestions/i.test(body) && /Reviewed commit:/i.test(body));
+}
+
+function commentHasActionableBody(comment) {
+  const body = comment.body?.trim() ?? "";
+  if (!body) return false;
+  return !(/Codex Review:\s*Didn't find any major issues/i.test(body) && /Reviewed commit:/i.test(body));
 }
 
 function isCodexBotLogin(login) {
