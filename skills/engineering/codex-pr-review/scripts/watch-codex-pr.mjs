@@ -23,6 +23,9 @@ query WatchCodexPullRequest(
   $reviewCursor: String,
   $threadCursor: String
 ) {
+  viewer {
+    login
+  }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
@@ -341,6 +344,7 @@ async function readPullRequestPage(target, cursors = {}) {
   const response = await ghJson(args);
   const pr = response?.data?.repository?.pullRequest;
   if (!pr) throw new Error(`Could not read PR #${target.number} in ${target.repo}.`);
+  pr.viewerLogin = response?.data?.viewer?.login;
   return pr;
 }
 
@@ -431,8 +435,9 @@ function summarize(pr) {
       comments: (thread.comments?.nodes ?? [])
         .filter((comment) => isCodexBotLogin(comment.author?.login))
         .map((comment) => ({
-          ...summarizeItem("thread_comment", comment),
+          ...summarizeItem("thread_comment", comment, pr.viewerLogin),
           ...reviewCommentContextById.get(comment.id),
+          threadIsActive: true,
         })),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -440,9 +445,7 @@ function summarize(pr) {
     feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
   );
   const freshActiveCodexThreads = activeCodexThreads.filter((thread) =>
-    thread.comments.some((comment) =>
-      feedbackItemIsFresh(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
-    ),
+    thread.comments.some((comment) => activeThreadCommentIsFresh(comment)),
   );
   const freshFeedbackAt = newestTimestamp(
     ...freshFeedbackItems.map(feedbackItemTimestamp),
@@ -555,6 +558,11 @@ function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewReq
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
 }
 
+function activeThreadCommentIsFresh(item) {
+  // GitHub keeps unresolved, non-outdated threads active across unrelated head changes.
+  return !item.validityReaction;
+}
+
 function feedbackItemTimestamp(item) {
   return item.updatedAt ?? item.createdAt;
 }
@@ -567,7 +575,7 @@ function collectFeedbackItems(pr) {
   const items = [];
 
   for (const comment of pr.comments?.nodes ?? []) {
-    if (isCodexBotLogin(comment.author?.login)) items.push(summarizeItem("pr_comment", comment));
+    if (isCodexBotLogin(comment.author?.login)) items.push(summarizeItem("pr_comment", comment, pr.viewerLogin));
   }
 
   for (const review of pr.reviews?.nodes ?? []) {
@@ -585,7 +593,7 @@ function collectFeedbackItems(pr) {
     for (const comment of review.comments?.nodes ?? []) {
       if (isCodexBotLogin(comment.author?.login)) {
         items.push({
-          ...summarizeItem("review_comment", comment),
+          ...summarizeItem("review_comment", comment, pr.viewerLogin),
           path: comment.path,
           line: comment.line,
           originalLine: comment.originalLine,
@@ -623,7 +631,7 @@ function parseReviewedCommitOid(body) {
     ?? null;
 }
 
-function summarizeItem(kind, item) {
+function summarizeItem(kind, item, handlerLogin) {
   return {
     kind,
     id: item.id,
@@ -631,18 +639,19 @@ function summarizeItem(kind, item) {
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     hasBody: Boolean(item.body?.trim()),
-    validityReaction: validityReaction(item.reactions?.nodes ?? []),
+    validityReaction: validityReaction(item.reactions?.nodes ?? [], handlerLogin),
   };
 }
 
-function validityReaction(reactions) {
+function validityReaction(reactions, handlerLogin) {
+  if (!handlerLogin) return null;
   return reactions
     .map((reaction) => ({
       content: normalizeReaction(reaction.content),
       user: reaction.user?.login,
     }))
     .find((reaction) =>
-      ["THUMBS_UP", "THUMBS_DOWN"].includes(reaction.content) && !isCodexBotLogin(reaction.user),
+      ["THUMBS_UP", "THUMBS_DOWN"].includes(reaction.content) && reaction.user === handlerLogin,
     ) ?? null;
 }
 
@@ -674,8 +683,8 @@ function fingerprint(summary) {
 }
 
 function immediateEvent(snapshot) {
-  if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   if (snapshot.status === "approved") return "codex_approved";
+  if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   return undefined;
 }
 

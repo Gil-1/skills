@@ -22,13 +22,13 @@ If no dedicated git worktree exists and code changes already exist in a normal c
 
 1. Verify the worktree with `git rev-parse --show-toplevel`, `git worktree list`, and `git status --short`. Ensure the worktree is on a non-protected feature branch, preferably `codex/<run-slug>` unless repo policy says otherwise.
 2. If the branch/worktree does not exist yet and no implementation changes have started, create it from the current base with `git worktree add -b codex/<run-slug> <sibling-or-repo-policy-path> <base>`. Record the path in the parent run state.
-3. Spawn a publishing sub-agent. The parent must not perform the commit, push, or PR creation itself when sub-agents are available; if no sub-agent facility exists, mark publishing blocked.
-4. Give the sub-agent the assignment listed below.
-5. After the sub-agent returns, verify the PR URL with `gh pr view`, confirm the branch pushed, and check the worktree status.
+3. Spawn a publishing sub-agent when sub-agent facilities are available. The parent must not perform the commit, push, or PR creation itself in that case. If no sub-agent facility exists, the parent performs the publishing assignment below directly and records that it used the parent-agent fallback.
+4. Give the sub-agent or parent-agent fallback the assignment listed below.
+5. After publishing completes, verify the PR URL with `gh pr view`, confirm the branch pushed, and check the worktree status.
 6. Load `codex-pr-review` in the PR worktree and follow it until Codex validates/merges, blocks on GitHub, or the review loop times out.
 7. Update the parent run state with PR URL, branch, commit SHAs, checks, review status, merge/fetch status, and remaining blockers.
 
-## Publishing Sub-Agent Assignment
+## Publishing Assignment
 
 Include:
 
