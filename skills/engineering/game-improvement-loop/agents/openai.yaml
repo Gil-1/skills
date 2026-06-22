@@ -1,0 +1,4 @@
+interface:
+  display_name: "Game Improvement Loop"
+  short_description: "Iterate on game feel with playtests"
+  default_prompt: "Use $game-improvement-loop to improve this game's player experience through iterative playtest cycles."

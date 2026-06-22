@@ -1,6 +1,6 @@
 ---
 name: codebase-cleanup-audit
-description: Audits a codebase for removable legacy, unused, duplicate, stale, confusing, or overcomplicated pieces before cleanup. Use when the user asks to simplify a repo, remove dead code, find legacy or unused things, fix duplicate wording/files, or research cleanup opportunities; compose improve-codebase-architecture for module-depth findings.
+description: Audits a codebase for removable legacy, unused, duplicate, stale, confusing, or overcomplicated pieces before cleanup. Use when the user asks to simplify a repo, remove dead code, find legacy or unused things, fix duplicate wording/files, or research cleanup opportunities; use codebase-design for module-depth checks and improve-codebase-architecture when cleanup becomes an architecture candidate.
 ---
 
 # Codebase Cleanup Audit
@@ -25,7 +25,7 @@ node scripts/cleanup-snapshot.mjs --root /path/to/project/docs
 
 Default report path: `.scratch/<datetime>-cleanup-snapshot.html` under the scanned root. HTML reports written inside `.scratch` are timestamp-prefixed. Use `--format json|markdown --out -` when you need a machine-only stdout snapshot.
 
-Use `improve-codebase-architecture` when cleanup involves shallow modules, noisy interfaces, misplaced seams, or testability/locality problems.
+Use `codebase-design` when cleanup involves shallow modules, noisy interfaces, misplaced seams, deletion-test calls, or testability/locality problems. Escalate to `improve-codebase-architecture` when the cleanup finding should become a visual architecture candidate instead of a safe cleanup batch.
 
 ## Workflow
 
@@ -39,7 +39,7 @@ Use `improve-codebase-architecture` when cleanup involves shallow modules, noisy
    - rename/reword: vague name, misleading skill description, stale terminology
    - archive: potentially useful history not needed in active source
    - defer: needs product decision, external contract, migration plan, or more evidence
-6. Apply the deletion test from `improve-codebase-architecture`: if removing a module removes complexity, candidate is cleanup; if complexity spreads to callers, propose a deeper module instead.
+6. Apply the deletion test from `codebase-design`: if removing a module removes complexity, candidate is cleanup; if complexity spreads to callers, propose a deeper module instead and route that finding through `improve-codebase-architecture` when it needs architecture exploration.
 7. Report before editing. Include risk, evidence, safe batch order, verification commands, and what must not move.
 
 ## Output

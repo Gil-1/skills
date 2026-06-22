@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRD To Prod Autopilot"
+  short_description: "Deliver an approved PRD through PR review"
+  default_prompt: "Use $prd-to-prod-autopilot to deliver this approved PRD through implementation, verification, and PR review."

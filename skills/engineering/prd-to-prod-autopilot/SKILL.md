@@ -1,6 +1,6 @@
 ---
 name: prd-to-prod-autopilot
-description: Orchestrate autonomous delivery from an approved PRD by sequencing existing engineering skills and supervising worker/reviewer sub-agents. Use when the user asks to automate PRD-to-issues, issue triage, ready-for-agent implementation, verification, review/fix, or final repo validation from an existing PRD.
+description: Orchestrate autonomous delivery from an approved PRD by sequencing existing engineering skills, supervising worker/reviewer sub-agents, and finishing through a worktree GitHub PR plus Codex PR review. Use when the user asks to automate PRD-to-issues, issue triage, ready-for-agent implementation, verification, review/fix, final repo validation, PR creation, or Codex PR review from an existing PRD.
 ---
 
 # PRD To Production Autopilot
@@ -11,13 +11,14 @@ Run this skill as a conductor, not as a replacement for the skills it calls. Sta
 
 - The PRD owns product scope.
 - `setup-matt-pocock-skills` owns repo-local skill configuration.
-- `to-issues` owns vertical issue breakdown and issue publication.
-- `triage` owns label/state transitions and durable agent briefs. Treat it as the source of truth for `ready-for-agent`.
+- `to-issues` owns vertical issue breakdown, issue publication, and marking the slices it creates as `ready-for-agent`.
+- `triage` owns raw incoming issues, external PRs, and pre-existing untriaged work. Do not re-triage issues freshly created by `to-issues`; only use `triage` when the PRD references existing tracker items, labels are missing or conflicting, or the work arrived outside the `to-issues` path.
 - Worker sub-agents own implementation of one assigned `ready-for-agent` issue.
 - `diagnosing-bugs` owns failed-check debugging.
 - `review-fix` owns the post-implementation review/fix pass for one issue.
-- `codex-pr-review` owns the post-push Codex PR review loop when a PR exists and the user asks for automated Codex validation.
-- The parent autopilot owns sequencing, run state, concurrency, sub-agent handoffs, integration into the canonical workspace, and final gates.
+- `worktree-pr-review` owns dedicated git worktree publishing, the publishing sub-agent, GitHub PR creation/push, and the handoff to `codex-pr-review`.
+- `codex-pr-review` owns the post-push Codex PR review loop once a PR exists.
+- The parent autopilot owns sequencing, run state, concurrency, sub-agent handoffs, the delivery worktree, and final gates.
 
 If a referenced skill explains how to do a task, load that skill and follow it instead of duplicating its mechanics here.
 
@@ -27,18 +28,20 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 - Answer skill approval checkpoints from evidence when the user asked for autopilot and no true human decision is required.
 - Treat secrets, credentials, legal/business policy, deploy permission, irreversible external actions, and product scope gaps as blockers.
 - Mark blocked work as `needs-info`, `ready-for-human`, or blocked with the smallest targeted question.
-- Production-ready means implemented and validated in the repo. Do not deploy, publish, push, create PRs, run shared migrations, or perform external side effects unless the user or repo policy explicitly asks for them. If a PR exists and the user wants automated Codex review, load `codex-pr-review` after the push.
+- Use a dedicated git worktree for all code-changing phases. Create or resume a feature branch, preferably `codex/<run-slug>` unless repo policy says otherwise, and pass that worktree path to every worker, reviewer/fixer, and publishing sub-agent.
+- Creating and pushing a GitHub PR plus running Codex PR review are in scope for autopilot completion unless the user opts out or repo policy forbids it. Do not deploy, publish releases, run shared migrations, or perform production side effects.
 - Keep temporary state at `.scratch/<run-slug>/prd-to-prod-autopilot-state.md`. Update it after each phase. Keep it on failure or blockage; delete it only after the final gate succeeds.
 
 ## Run Loop
 
-1. Prepare: identify the PRD source, read repo instructions and engineering-skill config, choose the run slug, create or resume the state file, and record verification commands plus delivery policy.
-2. Create issues: load `to-issues` with the PRD. Let it draft/publish the vertical slices and dependency relationships. Record the resulting issue manifest.
-3. Triage issues: load `triage` for the created issues. Let it apply labels/states and create agent briefs. Record which issues are ready for agents, human-owned, blocked, or waiting for info.
-4. Schedule workers: run independent `ready-for-agent` issues through supervised worker sub-agents when the current agent environment allows it. Serialize issues that likely touch the same risky files, public contracts, migrations, data models, or shared tests.
+1. Prepare: identify the PRD source, read repo instructions and engineering-skill config, choose the run slug, create or resume the state file, create or resume the delivery git worktree/branch, and record verification commands plus delivery policy.
+2. Create issues: load `to-issues` with the PRD. Let it draft/publish the vertical slices and dependency relationships. Record the resulting issue manifest as `ready-for-agent` unless a slice is explicitly blocked or marked otherwise.
+3. Normalize existing work only when needed: if the PRD references pre-existing raw issues, external PRs, missing labels, or conflicting tracker state, load `triage` for those items only. Record which items are ready for agents, human-owned, blocked, or waiting for info.
+4. Schedule workers: run independent `ready-for-agent` items from the issue manifest through supervised worker sub-agents inside the delivery worktree when the current agent environment allows it. Serialize items that likely touch the same risky files, public contracts, migrations, data models, or shared tests.
 5. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it.
 6. Review and fix: assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Integrate fixes, rerun relevant checks, and record review status.
-7. Run the final gate: rerun or confirm repo-level checks, audit PRD/issue coverage and blockers, verify no sub-agent handoff is stale or missing, then summarize the run.
+7. Run the final repo gate: rerun or confirm repo-level checks, audit PRD/issue coverage and blockers, and verify no sub-agent handoff is stale or missing.
+8. Publish and review: when the run is done for now and code changes exist, load `worktree-pr-review` with the delivery state. It must spawn the publishing sub-agent to commit, push, and create the GitHub PR, then run `codex-pr-review` until it finishes, blocks, or times out.
 
 ## Sub-Agent Protocol
 
@@ -51,13 +54,14 @@ Each worker assignment must include:
 - Dependencies and blocked-by status.
 - Acceptance criteria and verification commands.
 - Delivery policy and external-action limits.
+- Delivery worktree path and branch.
 - Explicit file or responsibility ownership.
 - Reminder that other agents may be editing nearby work, so the worker must not revert unrelated changes.
 - Required handoff: status, changed files, checks run with results, acceptance criteria status, assumptions, blockers, and integration notes.
 
 Each reviewer/fixer assignment must include the issue brief, PRD context, worker handoff, changed files or diff, verification evidence, known assumptions, and risky contracts. Prefer a reviewer who did not implement the issue.
 
-On timeout, conflict, vague handoff, partial work, or sandbox-only artifacts, recover the transcript, update state, narrow or split the assignment if needed, integrate only clear work into the canonical workspace, and rerun checks. If the next action is not clear, mark the issue blocked with evidence.
+On timeout, conflict, vague handoff, partial work, or sandbox-only artifacts, recover the transcript, update state, narrow or split the assignment if needed, integrate only clear work into the delivery worktree, and rerun checks. If the next action is not clear, mark the issue blocked with evidence.
 
 ## Completion Gate
 
@@ -67,5 +71,6 @@ Do not finish the run until:
 - Every remaining non-implemented issue is `needs-info`, `ready-for-human`, or blocked with the smallest targeted question.
 - Relevant full-repo checks have passed or their remaining failures are explained as pre-existing/out of scope with evidence.
 - Cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance coverage have been checked.
+- The delivery worktree has been handed to `worktree-pr-review`, or PR publishing is blocked with evidence and the smallest actionable next step.
 
-Final output must summarize the PRD source, created issues, completed issues, verification commands/results, assumptions accepted during delivery, and remaining blockers.
+Final output must summarize the PRD source, created issues, completed issues, delivery worktree/branch, verification commands/results, PR URL/review outcome when available, assumptions accepted during delivery, and remaining blockers.
