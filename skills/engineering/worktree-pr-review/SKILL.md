@@ -46,7 +46,7 @@ The sub-agent must:
 3. Run any stale or missing verification that is cheap enough to confirm the handoff. Do not skip failed required checks.
 4. Commit with a message that reflects the delivered scope.
 5. Push with `git push -u <remote> <branch>`.
-6. Create the PR with `gh pr create`. Use `--draft` when the work is partial, blocked, or has unresolved acceptance criteria; otherwise open a ready PR. Include delivery summary, checks, assumptions, and blockers in the body. Add a `References` section with every relevant PRD, issue, architecture note, ADR, design doc, or other document that materially defines the work. Prefer URLs for tracker/GitHub docs; use repo-relative paths for local documents. Do not include unrelated docs merely because they exist.
+6. Create the PR with non-interactive `gh pr create` flags: pass an explicit `--title` plus either `--body` or `--body-file`; `--fill` is acceptable only when the generated title/body are inspected and still satisfy this assignment. Use `--draft` when the work is partial, blocked, or has unresolved acceptance criteria; otherwise open a ready PR. Include delivery summary, checks, assumptions, and blockers in the body. Add a `References` section with every relevant PRD, issue, architecture note, ADR, design doc, or other document that materially defines the work. Prefer URLs for tracker/GitHub docs; use repo-relative paths for local documents. Do not include unrelated docs merely because they exist.
 7. Return the required handoff.
 
 ## Rules

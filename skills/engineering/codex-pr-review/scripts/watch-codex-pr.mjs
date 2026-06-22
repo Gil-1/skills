@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const BOT_LOGIN = "chatgpt-codex-connector[bot]";
+const BOT_LOGINS = new Set(["chatgpt-codex-connector", "chatgpt-codex-connector[bot]"]);
 const DEFAULT_INTERVAL_SECONDS = 20;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
 const MAX_BUFFER = 10 * 1024 * 1024;
@@ -31,14 +31,6 @@ query WatchCodexPullRequest(
       headRefOid
       baseRefName
       mergeStateStatus
-      commits(last: 1) {
-        nodes {
-          commit {
-            oid
-            committedDate
-          }
-        }
-      }
       reactions(first: 100, after: $reactionCursor) {
         nodes {
           content
@@ -75,6 +67,9 @@ query WatchCodexPullRequest(
           body
           state
           submittedAt
+          commit {
+            oid
+          }
           author {
             login
           }
@@ -125,6 +120,62 @@ query WatchCodexPullRequest(
               hasNextPage
               endCursor
             }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+`;
+
+const REVIEW_COMMENTS_QUERY = `
+query WatchCodexReviewComments($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReview {
+      comments(first: 100, after: $cursor) {
+        nodes {
+          id
+          url
+          body
+          path
+          line
+          originalLine
+          createdAt
+          updatedAt
+          author {
+            login
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+`;
+
+const THREAD_COMMENTS_QUERY = `
+query WatchCodexThreadComments($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        nodes {
+          id
+          url
+          body
+          path
+          line
+          originalLine
+          createdAt
+          updatedAt
+          author {
+            login
           }
         }
         pageInfo {
@@ -259,6 +310,8 @@ async function readSnapshot(target) {
   pr.comments = await readConnectionPages(target, pr.comments, "comments", "commentCursor");
   pr.reviews = await readConnectionPages(target, pr.reviews, "reviews", "reviewCursor");
   pr.reviewThreads = await readConnectionPages(target, pr.reviewThreads, "reviewThreads", "threadCursor");
+  await readNestedCommentPages(pr.reviews?.nodes ?? [], REVIEW_COMMENTS_QUERY);
+  await readNestedCommentPages(pr.reviewThreads?.nodes ?? [], THREAD_COMMENTS_QUERY);
 
   return summarize(pr);
 }
@@ -281,31 +334,68 @@ async function readConnectionPages(target, initialConnection, connectionName, cu
   };
 }
 
+async function readNestedCommentPages(nodes, query) {
+  for (const node of nodes) {
+    node.comments = await readNodeConnectionPages(query, node.id, node.comments, "comments");
+  }
+}
+
+async function readNodeConnectionPages(query, nodeId, initialConnection, connectionName) {
+  const nodes = [...(initialConnection?.nodes ?? [])];
+  let pageInfo = initialConnection?.pageInfo;
+
+  while (pageInfo?.hasNextPage) {
+    const response = await ghJson([
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-F",
+      `id=${nodeId}`,
+      "-F",
+      `cursor=${pageInfo.endCursor}`,
+    ]);
+    const nextConnection = response?.data?.node?.[connectionName];
+    nodes.push(...(nextConnection?.nodes ?? []));
+    pageInfo = nextConnection?.pageInfo;
+  }
+
+  return {
+    ...(initialConnection ?? {}),
+    nodes,
+    pageInfo,
+  };
+}
+
 function summarize(pr) {
-  const headCommit = (pr.commits?.nodes ?? []).at(-1)?.commit;
   const latestReviewRequestAt = latestCodexReviewRequestAt(pr.comments?.nodes ?? []);
-  const statusFreshAfter = newestTimestamp(headCommit?.committedDate, latestReviewRequestAt);
+  const currentHeadReview = latestCurrentHeadCodexReview(pr.reviews?.nodes ?? [], pr.headRefOid, latestReviewRequestAt);
+  const statusFreshAfter = latestReviewRequestAt;
   const bodyReactions = (pr.reactions?.nodes ?? [])
-    .filter((reaction) => reaction.user?.login === BOT_LOGIN)
+    .filter((reaction) => isCodexBotLogin(reaction.user?.login))
     .map((reaction) => ({
       content: normalizeReaction(reaction.content),
       createdAt: reaction.createdAt,
     }))
     .sort(compareByDateThenContent);
 
-  const status = codexStatusFromReactions(bodyReactions, statusFreshAfter);
+  const status = codexStatusFromReactions(bodyReactions, statusFreshAfter, Boolean(currentHeadReview));
 
+  const reviewCommentContextById = reviewCommentContext(pr.reviews?.nodes ?? []);
   const feedbackItems = collectFeedbackItems(pr);
   const activeCodexThreads = (pr.reviewThreads?.nodes ?? [])
     .filter((thread) => !thread.isResolved && !thread.isOutdated)
-    .filter((thread) => (thread.comments?.nodes ?? []).some((comment) => comment.author?.login === BOT_LOGIN))
+    .filter((thread) => (thread.comments?.nodes ?? []).some((comment) => isCodexBotLogin(comment.author?.login)))
     .map((thread) => ({
       id: thread.id,
       path: thread.path,
       line: thread.line,
       comments: (thread.comments?.nodes ?? [])
-        .filter((comment) => comment.author?.login === BOT_LOGIN)
-        .map((comment) => summarizeItem("thread_comment", comment)),
+        .filter((comment) => isCodexBotLogin(comment.author?.login))
+        .map((comment) => ({
+          ...summarizeItem("thread_comment", comment),
+          ...reviewCommentContextById.get(comment.id),
+        })),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
   const freshFeedbackItems = feedbackItems.filter((item) =>
@@ -322,15 +412,10 @@ function summarize(pr) {
     url: pr.url,
     headRefName: pr.headRefName,
     headRefOid: pr.headRefOid,
-    headCommit: headCommit
-      ? {
-          oid: headCommit.oid,
-          committedDate: headCommit.committedDate,
-        }
-      : null,
     baseRefName: pr.baseRefName,
     mergeStateStatus: pr.mergeStateStatus,
     latestReviewRequestAt,
+    currentHeadReview,
     statusFreshAfter,
     status,
     bodyReactions,
@@ -360,13 +445,13 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions, statusFreshAfter) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter, currentHeadReviewed) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
     .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
-  if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
+  if (newestStatusReaction?.content === "THUMBS_UP" && currentHeadReviewed) return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
   if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
     return "other-reaction";
@@ -380,6 +465,22 @@ function latestCodexReviewRequestAt(comments) {
       .filter((comment) => /^\s*@codex\s+review\s*$/i.test(comment.body ?? ""))
       .map((comment) => comment.createdAt),
   );
+}
+
+function latestCurrentHeadCodexReview(reviews, headRefOid, latestReviewRequestAt) {
+  const matchingReviews = reviews
+    .filter((review) => isCodexBotLogin(review.author?.login))
+    .map((review) => ({
+      id: review.id,
+      url: review.url,
+      submittedAt: review.submittedAt,
+      reviewedCommitOid: reviewedCommitOid(review),
+    }))
+    .filter((review) => commitMatchesHead(review.reviewedCommitOid, headRefOid))
+    .filter((review) => isFreshTimestamp(review.submittedAt, latestReviewRequestAt))
+    .sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)));
+
+  return matchingReviews.at(-1) ?? null;
 }
 
 function newestTimestamp(...timestamps) {
@@ -400,21 +501,25 @@ function isFreshTimestamp(timestamp, statusFreshAfter) {
 
 function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
   if (item.reviewedCommitOid && headRefOid) {
-    const matchesHead = headRefOid.startsWith(item.reviewedCommitOid) || item.reviewedCommitOid.startsWith(headRefOid);
-    return matchesHead && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
+    return commitMatchesHead(item.reviewedCommitOid, headRefOid)
+      && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
   }
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
+}
+
+function commitMatchesHead(commitOid, headRefOid) {
+  return Boolean(commitOid && headRefOid && (headRefOid.startsWith(commitOid) || commitOid.startsWith(headRefOid)));
 }
 
 function collectFeedbackItems(pr) {
   const items = [];
 
   for (const comment of pr.comments?.nodes ?? []) {
-    if (comment.author?.login === BOT_LOGIN) items.push(summarizeItem("pr_comment", comment));
+    if (isCodexBotLogin(comment.author?.login)) items.push(summarizeItem("pr_comment", comment));
   }
 
   for (const review of pr.reviews?.nodes ?? []) {
-    if (review.author?.login === BOT_LOGIN) {
+    if (isCodexBotLogin(review.author?.login)) {
       items.push({
         kind: "review",
         id: review.id,
@@ -422,22 +527,42 @@ function collectFeedbackItems(pr) {
         state: review.state,
         updatedAt: review.submittedAt,
         hasBody: Boolean(review.body?.trim()),
-        reviewedCommitOid: parseReviewedCommitOid(review.body),
+        reviewedCommitOid: reviewedCommitOid(review),
       });
     }
     for (const comment of review.comments?.nodes ?? []) {
-      if (comment.author?.login === BOT_LOGIN) {
+      if (isCodexBotLogin(comment.author?.login)) {
         items.push({
           ...summarizeItem("review_comment", comment),
           path: comment.path,
           line: comment.line,
           originalLine: comment.originalLine,
+          reviewedCommitOid: reviewedCommitOid(review),
         });
       }
     }
   }
 
   return items.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
+}
+
+function isCodexBotLogin(login) {
+  return BOT_LOGINS.has(login);
+}
+
+function reviewCommentContext(reviews) {
+  const context = new Map();
+  for (const review of reviews) {
+    const reviewedCommit = reviewedCommitOid(review);
+    for (const comment of review.comments?.nodes ?? []) {
+      context.set(comment.id, { reviewedCommitOid: reviewedCommit });
+    }
+  }
+  return context;
+}
+
+function reviewedCommitOid(review) {
+  return review.commit?.oid ?? parseReviewedCommitOid(review.body);
 }
 
 function parseReviewedCommitOid(body) {
