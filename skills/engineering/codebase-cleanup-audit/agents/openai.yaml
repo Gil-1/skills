@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codebase Cleanup Audit"
+  short_description: "Find safe cleanup opportunities"
+  default_prompt: "Use $codebase-cleanup-audit to audit this codebase for safe cleanup opportunities."

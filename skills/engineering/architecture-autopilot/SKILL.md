@@ -1,6 +1,6 @@
 ---
 name: architecture-autopilot
-description: Orchestrates an autonomous architecture-to-delivery run by composing Matt Pocock engineering skills and supervising state, handoffs, and sub-agents. Use when the user asks to run architecture autopilot, automate architecture improvements, process architecture candidates, or continue from architecture review to PRD/issues/implementation without further interviews.
+description: Orchestrates an autonomous architecture-to-delivery run by composing Matt Pocock engineering skills and supervising state, handoffs, sub-agents, git worktree delivery, GitHub PR publishing, and Codex PR review. Use when the user asks to run architecture autopilot, automate architecture improvements, process architecture candidates, or continue from architecture review to PRD/issues/implementation without further interviews.
 ---
 
 # Architecture Autopilot
@@ -11,9 +11,10 @@ Run the architecture-to-delivery loop by composing installed skills. This skill 
 
 - `setup-matt-pocock-skills` owns repo-local skill configuration.
 - `improve-codebase-architecture` owns architecture discovery and candidate language.
-- `grill-me` owns design interrogation. In autopilot, answer its questions from repo evidence, prior decisions, and its recommended answers.
+- `grill-with-docs` owns codebase design interrogation by composing `grilling` with `domain-modeling`. In autopilot, answer its questions from repo evidence, prior decisions, and its recommended answers while preserving any glossary or ADR side effects it would normally make.
 - `to-prd` owns PRD synthesis and publication.
-- `prd-to-prod-autopilot` owns issue creation, triage, implementation, review/fix, and final repo validation.
+- `prd-to-prod-autopilot` owns issue creation, existing tracker normalization when needed, implementation, review/fix, and final repo validation.
+- `worktree-pr-review` owns the final GitHub PR publishing and Codex PR review loop when delivery returns reviewable code changes.
 
 If an underlying skill describes how to do a task, follow that skill. This skill only decides when to call it, what context to pass, how to recover, and when the outer run is complete.
 
@@ -22,22 +23,25 @@ If an underlying skill describes how to do a task, follow that skill. This skill
 - Stop once after the architecture candidate list and ask the user which candidates to run. After that checkpoint, continue without interviewing the user unless there is a true blocker.
 - Treat secrets, credentials, production risk, legal/business policy, irreversible external actions, and product direction gaps as blockers. Ask the smallest targeted question and record the blocked slice.
 - Prefer evidence from repo instructions, `CONTEXT.md`, ADRs, issue tracker config, and code. If evidence is missing but the underlying skill provides a recommended answer, use it and record it as an assumption.
+- Use a dedicated git worktree for all delivery code changes. Architecture discovery can read the original checkout, but implementation, review/fix, publishing, and Codex PR review must happen in the recorded delivery worktree/branch.
 - Keep a temporary state file at `.scratch/<run-slug>/architecture-autopilot-state.md`. Track selected candidates, decision packets, PRD location, delivery handoff, blockers, verification evidence, and recovery notes.
-- Respect repo policy for branches, PRs, publishing, deployment, migrations, and external side effects. Do not invent extra release workflow.
+- Creating and pushing a GitHub PR plus running Codex PR review are in scope for autopilot completion unless the user opts out or repo policy forbids it. Do not deploy, publish releases, run shared migrations, or perform production side effects.
 
 ## Workflow
 
-1. Prepare the run: route to the target repo, read repo instructions and domain docs, ensure Matt Pocock skill setup exists, choose the run slug, and create or resume the state file.
+1. Prepare the run: route to the target repo, read repo instructions and domain docs, ensure Matt Pocock skill setup exists, choose the run slug, choose the delivery worktree/branch policy, and create or resume the state file.
 2. Discover candidates: load `improve-codebase-architecture`, let it produce the numbered candidate list, present the list, and wait for the user's candidate selection.
-3. Resolve selected candidates: for each chosen candidate, load `grill-me` and run a non-interactive decision pass. Record the selected design, rejected alternatives, assumptions, blockers, affected modules, and expected test surface.
+3. Resolve selected candidates: for each chosen candidate, load `grill-with-docs` and run a non-interactive decision pass. Record the selected design, rejected alternatives, domain terms or ADR updates, assumptions, blockers, affected modules, and expected test surface.
 4. Create the PRD: load `to-prd` with the candidate decision packets as context. Let it own PRD structure and publication. Record the PRD path or issue id.
-5. Hand off delivery: load `prd-to-prod-autopilot` with the PRD plus the architecture decision packets. Let it own issues, triage, worker execution, review/fix, and the repo gate.
-6. Finish the outer run: merge the delivery summary into the architecture state, keep blocked state files for continuation, and delete the temporary state file only after the delivery gate succeeds.
+5. Hand off delivery: load `prd-to-prod-autopilot` with the PRD, architecture decision packets, delivery worktree/branch policy, and final `worktree-pr-review` requirement. Let it own issue creation, existing tracker normalization when needed, worker execution, review/fix, repo gate, PR publishing, and Codex PR review.
+6. Confirm publish/review: if delivery returned reviewable code changes but did not run `worktree-pr-review`, load it with the delivery worktree and state before finishing the architecture run.
+7. Finish the outer run: merge the delivery summary and PR/review outcome into the architecture state, keep blocked state files for continuation, and delete the temporary state file only after the delivery and publish/review gates succeed.
 
 ## Sub-Agent Management
 
 - The parent agent owns the canonical run state and issue manifest. Sub-agents return evidence; they do not redefine the workflow.
 - Use explorer sub-agents only for bounded, non-overlapping codebase questions. The parent deduplicates candidates and resolves conflicts.
 - Do not let architecture-phase sub-agents publish PRDs, create issues, change code, or update tracker state unless that is the current delegated phase.
+- Pass the delivery worktree path and branch to every code-changing delivery sub-agent.
 - Pass raw context, file paths, issue ids, and acceptance evidence to sub-agents. Do not pass hidden conclusions as facts.
 - On timeout, conflict, or partial handoff, update the state file, narrow the assignment, retry once when useful, then mark the item blocked with evidence.

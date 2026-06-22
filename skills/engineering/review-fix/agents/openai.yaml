@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Fix"
+  short_description: "Review one issue and fix defects"
+  default_prompt: "Use $review-fix to review one implemented issue and fix in-scope defects."
