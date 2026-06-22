@@ -11,8 +11,10 @@ const DEFAULT_INTERVAL_SECONDS = 20;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
+const STATUS_REACTION_CONTENTS = new Set(["EYES", "THUMBS_UP"]);
+
 const QUERY = `
-query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!) {
+query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!, $reactionCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
@@ -20,13 +22,17 @@ query WatchCodexPullRequest($owner: String!, $name: String!, $number: Int!) {
       headRefName
       baseRefName
       mergeStateStatus
-      reactions(first: 100) {
+      reactions(first: 100, after: $reactionCursor) {
         nodes {
           content
           createdAt
           user {
             login
           }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
         }
       }
       comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
@@ -187,8 +193,8 @@ async function currentRepo() {
   return repo.nameWithOwner;
 }
 
-async function readSnapshot(target) {
-  const response = await ghJson([
+async function readPullRequestPage(target, reactionCursor) {
+  const args = [
     "api",
     "graphql",
     "-f",
@@ -199,9 +205,32 @@ async function readSnapshot(target) {
     `name=${target.name}`,
     "-F",
     `number=${target.number}`,
-  ]);
+  ];
+  if (reactionCursor) args.push("-F", `reactionCursor=${reactionCursor}`);
+
+  const response = await ghJson(args);
   const pr = response?.data?.repository?.pullRequest;
   if (!pr) throw new Error(`Could not read PR #${target.number} in ${target.repo}.`);
+  return pr;
+}
+
+async function readSnapshot(target) {
+  const pr = await readPullRequestPage(target);
+  const reactions = [...(pr.reactions?.nodes ?? [])];
+  let pageInfo = pr.reactions?.pageInfo;
+
+  while (pageInfo?.hasNextPage) {
+    const nextPr = await readPullRequestPage(target, pageInfo.endCursor);
+    reactions.push(...(nextPr.reactions?.nodes ?? []));
+    pageInfo = nextPr.reactions?.pageInfo;
+  }
+
+  pr.reactions = {
+    ...(pr.reactions ?? {}),
+    nodes: reactions,
+    pageInfo,
+  };
+
   return summarize(pr);
 }
 
@@ -212,16 +241,9 @@ function summarize(pr) {
       content: normalizeReaction(reaction.content),
       createdAt: reaction.createdAt,
     }))
-    .sort(compareByContentThenDate);
+    .sort(compareByDateThenContent);
 
-  const reactionContents = new Set(bodyReactions.map((reaction) => reaction.content));
-  const status = reactionContents.has("THUMBS_UP") || reactionContents.has("+1")
-    ? "approved"
-    : reactionContents.has("EYES")
-      ? "reviewing"
-      : reactionContents.size > 0
-        ? "other-reaction"
-        : "none";
+  const status = codexStatusFromReactions(bodyReactions);
 
   const feedbackItems = collectFeedbackItems(pr);
   const activeCodexThreads = (pr.reviewThreads?.nodes ?? [])
@@ -263,8 +285,19 @@ function normalizeReaction(content) {
   return content === "+1" ? "THUMBS_UP" : content;
 }
 
-function compareByContentThenDate(a, b) {
-  return a.content.localeCompare(b.content) || String(a.createdAt).localeCompare(String(b.createdAt));
+function compareByDateThenContent(a, b) {
+  return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
+}
+
+function codexStatusFromReactions(bodyReactions) {
+  const newestStatusReaction = bodyReactions
+    .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
+    .at(-1);
+
+  if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
+  if (newestStatusReaction?.content === "EYES") return "reviewing";
+  if (bodyReactions.length > 0) return "other-reaction";
+  return "none";
 }
 
 function collectFeedbackItems(pr) {
@@ -336,6 +369,7 @@ function fingerprint(summary) {
 
 function immediateEvent(snapshot) {
   if (snapshot.status === "approved") return "codex_approved";
+  if (snapshot.feedbackCount > 0 || snapshot.activeCodexThreadCount > 0) return "codex_feedback_changed";
   return undefined;
 }
 
