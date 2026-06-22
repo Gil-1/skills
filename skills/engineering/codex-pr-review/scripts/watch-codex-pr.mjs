@@ -379,8 +379,6 @@ function summarize(pr) {
     }))
     .sort(compareByDateThenContent);
 
-  const status = codexStatusFromReactions(bodyReactions, statusFreshAfter, Boolean(currentHeadReview));
-
   const reviewCommentContextById = reviewCommentContext(pr.reviews?.nodes ?? []);
   const feedbackItems = collectFeedbackItems(pr);
   const activeCodexThreads = (pr.reviewThreads?.nodes ?? [])
@@ -406,6 +404,12 @@ function summarize(pr) {
       feedbackItemIsFresh(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
     ),
   );
+  const freshFeedbackAt = newestTimestamp(
+    ...freshFeedbackItems.map(feedbackItemTimestamp),
+    ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
+  );
+  const approvalFreshAfter = newestTimestamp(statusFreshAfter, freshFeedbackAt);
+  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter);
 
   return {
     number: pr.number,
@@ -417,6 +421,8 @@ function summarize(pr) {
     latestReviewRequestAt,
     currentHeadReview,
     statusFreshAfter,
+    freshFeedbackAt,
+    approvalFreshAfter,
     status,
     bodyReactions,
     feedbackItems,
@@ -428,6 +434,7 @@ function summarize(pr) {
     fingerprint: fingerprint({
       headRefOid: pr.headRefOid,
       statusFreshAfter,
+      approvalFreshAfter,
       status,
       bodyReactions,
       feedbackItems,
@@ -445,13 +452,13 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions, statusFreshAfter, currentHeadReviewed) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
     .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
-  if (newestStatusReaction?.content === "THUMBS_UP" && currentHeadReviewed) return "approved";
+  if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
   if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
     return "other-reaction";
@@ -505,6 +512,10 @@ function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewReq
       && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
   }
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
+}
+
+function feedbackItemTimestamp(item) {
+  return item.updatedAt ?? item.createdAt;
 }
 
 function commitMatchesHead(commitOid, headRefOid) {
@@ -586,6 +597,7 @@ function fingerprint(summary) {
   return JSON.stringify({
     headRefOid: summary.headRefOid,
     statusFreshAfter: summary.statusFreshAfter,
+    approvalFreshAfter: summary.approvalFreshAfter,
     status: summary.status,
     bodyReactions: summary.bodyReactions.map((reaction) => `${reaction.content}:${reaction.createdAt}`),
     mergeStateStatus: summary.mergeStateStatus,
