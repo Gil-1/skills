@@ -7,9 +7,11 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const BOT_LOGINS = new Set(["chatgpt-codex-connector", "chatgpt-codex-connector[bot]"]);
-const DEFAULT_INTERVAL_SECONDS = 20;
+const DEFAULT_INTERVAL_SECONDS = 120;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
+const DEFAULT_MIN_GRAPHQL_REMAINING = 1000;
 const MAX_BUFFER = 10 * 1024 * 1024;
+const RATE_LIMIT_RESET_SAFETY_MS = 5000;
 
 const STATUS_REACTION_CONTENTS = new Set(["EYES", "THUMBS_UP"]);
 
@@ -39,6 +41,7 @@ query WatchCodexPullRequest(
           commit {
             oid
             pushedDate
+            committedDate
           }
         }
       }
@@ -348,6 +351,8 @@ Options:
   --repo <owner/name>     Repository. Default: current gh repo.
   --interval <seconds>    Poll interval. Default: ${DEFAULT_INTERVAL_SECONDS}.
   --timeout <seconds>     Maximum time to wait. Default: ${DEFAULT_TIMEOUT_SECONDS}.
+  --min-graphql-remaining <points>
+                          Wait for reset before polling when GraphQL budget is below this. Default: ${DEFAULT_MIN_GRAPHQL_REMAINING}.
   --once                  Print the current summarized state and exit.
   --help                  Show this help.
 `;
@@ -359,6 +364,7 @@ function parseArgs(argv) {
     repo: undefined,
     intervalSeconds: DEFAULT_INTERVAL_SECONDS,
     timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
+    minGraphqlRemaining: DEFAULT_MIN_GRAPHQL_REMAINING,
     once: false,
   };
 
@@ -372,7 +378,7 @@ function parseArgs(argv) {
       options.once = true;
       continue;
     }
-    if (["--pr", "--repo", "--interval", "--timeout"].includes(arg)) {
+    if (["--pr", "--repo", "--interval", "--timeout", "--min-graphql-remaining"].includes(arg)) {
       const value = argv[i + 1];
       if (!value) throw new Error(`${arg} requires a value`);
       i += 1;
@@ -380,6 +386,7 @@ function parseArgs(argv) {
       if (arg === "--repo") options.repo = value;
       if (arg === "--interval") options.intervalSeconds = parsePositiveSeconds(arg, value);
       if (arg === "--timeout") options.timeoutSeconds = parsePositiveSeconds(arg, value);
+      if (arg === "--min-graphql-remaining") options.minGraphqlRemaining = parseNonNegativeInteger(arg, value);
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -394,9 +401,64 @@ function parsePositiveSeconds(name, value) {
   return parsed;
 }
 
+function parseNonNegativeInteger(name, value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative integer`);
+  return parsed;
+}
+
 async function ghJson(args) {
   const { stdout } = await execFileAsync("gh", args, { maxBuffer: MAX_BUFFER });
   return JSON.parse(stdout);
+}
+
+async function graphqlRateLimit() {
+  try {
+    return await ghJson(["api", "rate_limit", "--jq", ".resources.graphql"]);
+  } catch {
+    return null;
+  }
+}
+
+function rateLimitWaitMs(rate) {
+  const resetSeconds = Number(rate?.reset || 0);
+  if (!Number.isFinite(resetSeconds) || resetSeconds <= 0) return 0;
+  return Math.max(0, resetSeconds * 1000 - Date.now() + RATE_LIMIT_RESET_SAFETY_MS);
+}
+
+async function waitForGraphqlBudget(options) {
+  const minRemaining = Number(options.minGraphqlRemaining || 0);
+  if (minRemaining <= 0) return;
+  const rate = await graphqlRateLimit();
+  const remaining = Number(rate?.remaining);
+  if (!Number.isFinite(remaining) || remaining >= minRemaining) return;
+  const waitMs = rateLimitWaitMs(rate);
+  if (waitMs <= 0) return;
+  const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
+  process.stderr.write(`watch-codex-pr: GitHub GraphQL remaining=${remaining} below ${minRemaining}; waiting until ${resetAt}\n`);
+  await sleep(waitMs);
+}
+
+function isGraphqlRateLimitError(error) {
+  const text = String(error?.stderr || error?.stdout || error?.message || error || "");
+  return /API rate limit exceeded/i.test(text) || /graphql.*rate limit/i.test(text);
+}
+
+async function readSnapshotRateAware(target, options) {
+  for (;;) {
+    await waitForGraphqlBudget(options);
+    try {
+      return await readSnapshot(target);
+    } catch (error) {
+      if (!isGraphqlRateLimitError(error)) throw error;
+      const rate = await graphqlRateLimit();
+      const waitMs = rateLimitWaitMs(rate);
+      if (waitMs <= 0) throw error;
+      const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
+      process.stderr.write(`watch-codex-pr: GitHub GraphQL rate limit hit; waiting until ${resetAt}\n`);
+      await sleep(waitMs);
+    }
+  }
 }
 
 async function resolveTarget(options) {
@@ -577,7 +639,9 @@ function summarize(pr) {
     ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
   );
   const approvalFreshAfter = newestTimestamp(statusFreshAfter, currentHeadReview?.submittedAt, freshFeedbackAt);
-  const approvalMatchesCurrentHead = Boolean(currentHeadReview) || reviewRequestCoversHead(pr, latestReviewRequestAt);
+  const approvalMatchesCurrentHead = Boolean(currentHeadReview)
+    || reviewRequestCoversHead(pr, latestReviewRequestAt)
+    || approvalReactionCoversHead(bodyReactions, headRefPushedAt);
   const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, approvalMatchesCurrentHead);
 
   return {
@@ -640,7 +704,16 @@ function codexStatusFromReactions(bodyReactions, statusFreshAfter, approvalMatch
 }
 
 function latestHeadCommitPushedAt(pr) {
-  return (pr.commits?.nodes ?? []).at(-1)?.commit?.pushedDate ?? null;
+  const commit = (pr.commits?.nodes ?? []).at(-1)?.commit;
+  return commit?.pushedDate ?? commit?.committedDate ?? null;
+}
+
+function approvalReactionCoversHead(bodyReactions, headRefPushedAt) {
+  if (!headRefPushedAt) return false;
+  const newestApproval = bodyReactions
+    .filter((reaction) => reaction.content === "THUMBS_UP")
+    .at(-1);
+  return Boolean(newestApproval && isFreshTimestamp(newestApproval.createdAt, headRefPushedAt));
 }
 
 function reviewRequestCoversHead(pr, latestReviewRequestAt) {
@@ -888,7 +961,7 @@ async function watch(options) {
   const startedAt = Date.now();
   const intervalMs = options.intervalSeconds * 1000;
   const timeoutMs = options.timeoutSeconds * 1000;
-  const initial = await readSnapshot(target);
+  const initial = await readSnapshotRateAware(target, options);
 
   if (options.once) {
     printResult({ event: "snapshot", target, current: slim(initial) });
@@ -914,7 +987,7 @@ async function watch(options) {
     await sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
     polls += 1;
 
-    const current = await readSnapshot(target);
+    const current = await readSnapshotRateAware(target, options);
     const event = immediateEvent(current) ?? changeEvent(initial, current);
     if (event) {
       printResult({
@@ -929,7 +1002,7 @@ async function watch(options) {
     }
   }
 
-  const current = await readSnapshot(target);
+  const current = await readSnapshotRateAware(target, options);
   printResult({
     event: "timeout",
     target,

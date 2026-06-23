@@ -10,7 +10,7 @@ Run the Codex review loop for the current GitHub PR. This skill is for automated
 ## Timing
 
 - Run the watcher as a CLI in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`.
-- By default, the watcher polls every 20 seconds for up to 30 minutes. Customize with `--interval <seconds>` and `--timeout <seconds>` when the repo or user request needs different timing.
+- By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Customize with `--interval <seconds>`, `--timeout <seconds>`, and `--min-graphql-remaining <points>` when the repo or user request needs different timing.
 - When Codex has not produced any PR-body status reaction, review, inline comment, or review thread yet, use a short start check: `node <skill-dir>/scripts/watch-codex-pr.mjs --timeout 300`. If that stays silent, manually request review once with a PR comment exactly `@codex review`, then run the watcher again.
 - The watcher polls with `gh` and exits when Codex PR-body status, Codex feedback, or merge state changes. If it exits with `timeout`, inspect the PR once more before reporting that Codex may be stuck.
 - Treat watcher completion as the wake signal, then inspect the PR again with `gh`. Do not background the watcher unless the current environment has a real thread-wakeup mechanism wired to that process; a detached script by itself cannot resume an idle agent.
