@@ -21,7 +21,7 @@ If an underlying skill describes how to do a task, follow that skill. This skill
 
 - Stop once after the architecture candidate list and ask the user which candidates to run. After that checkpoint, continue without interviewing the user unless there is a true blocker.
 - Treat secrets, credentials, production risk, legal/business policy, irreversible external actions, and product direction gaps as blockers. Ask the smallest targeted question and record the blocked slice.
-- Prefer evidence from repo instructions, configured engineering-skill docs, issue tracker config, and code. If evidence is missing but the underlying skill provides a recommended answer, use it and record it as an assumption.
+- Prefer evidence from repo instructions, configured engineering-skill docs, `CONTEXT.md` or `CONTEXT-MAP.md`, relevant ADRs, issue tracker config, and code. If evidence is missing but the underlying skill provides a recommended answer, use it and record it as an assumption.
 - Let `prd-to-prod-autopilot` own delivery worktree/branch policy. Architecture discovery can read the original checkout, but code-changing phases must happen in the assigned delivery worktrees/branches.
 - Keep a temporary state file at `.scratch/<run-slug>/architecture-autopilot-state.md`. Track selected candidates, decision packets, PRD location, delivery handoff, blockers, verification evidence, and recovery notes.
 - Creating and pushing GitHub PRs plus parent-launched Codex PR review sub-agents are in scope for autopilot completion unless the user opts out or repo policy forbids it. Do not deploy, publish releases, run shared migrations, or perform production side effects.

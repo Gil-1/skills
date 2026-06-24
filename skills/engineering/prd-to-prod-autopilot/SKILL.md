@@ -23,7 +23,7 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 
 ## Autonomy Policy
 
-- Use the PRD, code, repo instructions, configured engineering-skill docs, issue tracker config, and prior issue discussion as evidence.
+- Use the PRD, code, repo instructions, configured engineering-skill docs, `CONTEXT.md` or `CONTEXT-MAP.md`, relevant ADRs, issue tracker config, and prior issue discussion as evidence.
 - Answer skill approval checkpoints from evidence when the user asked for autopilot and no true human decision is required.
 - Treat secrets, credentials, legal/business policy, deploy permission, irreversible external actions, and product scope gaps as blockers.
 - Mark blocked work through the configured triage state vocabulary with the smallest targeted question.
@@ -57,7 +57,7 @@ Each worker assignment must include only orchestration context not already owned
 - Assigned worktree path and branch.
 - Explicit file or responsibility ownership when needed to avoid parallel conflicts.
 - Reminder that other agents may be editing nearby work, so the worker must not revert unrelated changes.
-- Required handoff: status, changed files, checks run with results, acceptance criteria status, assumptions, blockers, integration notes, and PR URL/branch/commit when code was pushed.
+- Required handoff: status, changed files, checks run with results, acceptance criteria status, assumptions, blockers, integration notes, and publishing details when code was pushed: PR URL, branch, commit SHA(s), draft/ready state, and publishing blockers if any.
 
 Each reviewer/fixer assignment must provide the review packet expected by `review-fix` and prefer a reviewer who did not implement the issue.
 
@@ -71,6 +71,6 @@ Do not finish the run until:
 - Every remaining non-implemented issue has the appropriate configured non-agent state or is blocked with the smallest targeted question.
 - Relevant full-repo checks have passed or their remaining failures are explained as pre-existing/out of scope with evidence.
 - Cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance coverage have been checked.
-- Each completed issue with code changes has been committed, pushed, and represented in a GitHub PR by its implementing worker, then handed to a fresh `codex-pr-review` sub-agent by the parent autopilot, or PR publishing/review is blocked with evidence and the smallest actionable next step.
+- Each completed issue with code changes has been committed, pushed, and represented in a GitHub PR by its implementing worker, then reviewed by a fresh `codex-pr-review` sub-agent launched by the parent autopilot. The review sub-agent must finish with validation, merge, timeout, or a blocker recorded with evidence; skipped or still-running review does not satisfy this gate.
 
 Final output must summarize the PRD source, created issues, completed issues, delivery worktrees/branches, verification commands/results, PR URLs/review outcomes when available, assumptions accepted during delivery, and remaining blockers.
