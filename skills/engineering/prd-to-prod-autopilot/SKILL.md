@@ -18,19 +18,9 @@ Run this skill as a conductor, not as a replacement for the skills it calls. Sta
 - `review-fix` owns the post-implementation review/fix pass for one issue.
 - `worktree-pr-review` owns dedicated git worktree publishing, the publishing sub-agent, GitHub PR creation/push, and the handoff to `codex-pr-review`.
 - `codex-pr-review` owns the post-push Codex PR review loop once a PR exists.
-- The parent autopilot owns sequencing, concurrency, sub-agent handoffs, the delivery worktree, and final gates. It does not own canonical issue state when a configured issue tracker is writable.
+- The parent autopilot owns sequencing, concurrency, sub-agent handoffs, the delivery worktree, and final gates.
 
 If a referenced skill explains how to do a task, load that skill and follow it instead of duplicating its mechanics here.
-
-## State Source Of Truth
-
-When the project has a configured, writable issue tracker, the tracker is the durable source of truth for issue manifests, dependencies, readiness, blockers, acceptance status, and implementation/review progress.
-
-- Let `to-issues` create and label tracker issues. Use those issue URLs or numbers as the manifest.
-- Let `triage` update tracker labels and comments for existing work, blockers, and state changes.
-- Record implementation and review evidence on the relevant tracker issue or PR when durable status is needed.
-- Do not create or maintain a `.scratch` file that mirrors tracker issue lists, labels, readiness, blockers, or completion state.
-- Use `.scratch/<run-slug>/prd-to-prod-autopilot-state.md` only when no writable tracker is configured, tracker access is blocked, or a minimal local resume note is truly needed for data that does not belong in the tracker. Keep that file limited to local-only coordination such as run slug, worktree path, branch, verification command shortlist, sub-agent transcript pointers, and the reason tracker state could not be used. Delete it after the final gate succeeds.
 
 ## Autonomy Policy
 
@@ -43,18 +33,20 @@ When the project has a configured, writable issue tracker, the tracker is the du
 
 ## Run Loop
 
-1. Prepare: identify the PRD source, read repo instructions and engineering-skill config, choose the run slug, determine whether the issue tracker is configured and writable, create or resume the delivery git worktree/branch, and record verification commands plus delivery policy. Create a `.scratch` fallback only under the limits in State Source Of Truth.
-2. Create issues: load `to-issues` with the PRD. Let it draft/publish the vertical slices and dependency relationships. Treat the resulting tracker issues as the manifest; do not copy their state into `.scratch`.
-3. Normalize existing work only when needed: if the PRD references pre-existing raw issues, external PRs, missing labels, or conflicting tracker state, load `triage` for those items only. Apply readiness, human-owned, blocked, or waiting-for-info state in the tracker rather than in a local duplicate.
-4. Schedule workers: run independent `ready-for-agent` tracker items through supervised worker sub-agents inside the delivery worktree when the current agent environment allows it. Serialize items that likely touch the same risky files, public contracts, migrations, data models, or shared tests.
-5. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When durable progress needs to be recorded, update the relevant tracker issue or PR. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it.
-6. Review and fix: assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Integrate fixes, rerun relevant checks, and record durable review status on the relevant tracker issue or PR.
-7. Run the final repo gate: rerun or confirm repo-level checks, audit tracker issue/PRD coverage and blockers, and verify no sub-agent handoff is stale or missing.
-8. Publish and review: when the run is done for now and code changes exist, load `worktree-pr-review` with the delivery summary and tracker issue references. It must spawn the publishing sub-agent to commit, push, and create the GitHub PR, then run `codex-pr-review` until it finishes, blocks, or times out.
+1. Prepare: identify the PRD source, read repo instructions and engineering-skill config, choose the run slug, create or resume the delivery git worktree/branch, and record verification commands plus delivery policy.
+2. Create issues: load `to-issues` with the PRD. Let it draft/publish the vertical slices and dependency relationships. Use the resulting issues as the work queue unless a slice is explicitly blocked or marked otherwise.
+3. Normalize existing work only when needed: if the PRD references pre-existing raw issues, external PRs, missing labels, or conflicting tracker state, load `triage` for those items only. Ensure referenced items carry the right state for agents, humans, blockers, or info requests.
+4. Schedule workers: run independent `ready-for-agent` items through supervised worker sub-agents inside the delivery worktree when the current agent environment allows it. Serialize items that likely touch the same risky files, public contracts, migrations, data models, or shared tests.
+5. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it.
+6. Review and fix: assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Integrate fixes, rerun relevant checks, and have the reviewer/fixer update the issue or PR they are reviewing when durable status changes.
+7. Run the final repo gate: rerun or confirm repo-level checks, audit PRD/issue coverage and blockers, and verify no sub-agent handoff is stale or missing.
+8. Publish and review: when the run is done for now and code changes exist, load `worktree-pr-review` with the delivery summary. It must spawn the publishing sub-agent to commit, push, and create the GitHub PR, then run `codex-pr-review` until it finishes, blocks, or times out.
 
 ## Sub-Agent Protocol
 
 Use one issue as the default unit of work. Split oversized issues before implementation continues.
+
+Each worker or reviewer/fixer owns status updates for the issue or PR it is assigned. When durable progress, blockers, verification evidence, or review outcome should be recorded, update that issue or PR directly using the owning skill's conventions. The parent autopilot coordinates sequencing and final gates, but does not maintain a parallel issue-state log.
 
 Each worker assignment must include:
 
@@ -70,7 +62,7 @@ Each worker assignment must include:
 
 Each reviewer/fixer assignment must include the issue brief, PRD context, worker handoff, changed files or diff, verification evidence, known assumptions, and risky contracts. Prefer a reviewer who did not implement the issue.
 
-On timeout, conflict, vague handoff, partial work, or sandbox-only artifacts, recover the transcript, update the relevant tracker issue or PR when durable status changes, narrow or split the assignment if needed, integrate only clear work into the delivery worktree, and rerun checks. If the next action is not clear, mark the issue blocked with evidence in the tracker.
+On timeout, conflict, vague handoff, partial work, or sandbox-only artifacts, recover the transcript, update the relevant issue or PR when needed, narrow or split the assignment if needed, integrate only clear work into the delivery worktree, and rerun checks. If the next action is not clear, mark the issue blocked with evidence.
 
 ## Completion Gate
 
@@ -78,9 +70,8 @@ Do not finish the run until:
 
 - Every implementable issue is implemented, verified, and reviewed/fixed, or explicitly blocked with evidence.
 - Every remaining non-implemented issue is `needs-info`, `ready-for-human`, or blocked with the smallest targeted question.
-- The issue tracker reflects current readiness, blocker, and completion state for all tracked work when tracker access is available.
 - Relevant full-repo checks have passed or their remaining failures are explained as pre-existing/out of scope with evidence.
 - Cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance coverage have been checked.
 - The delivery worktree has been handed to `worktree-pr-review`, or PR publishing is blocked with evidence and the smallest actionable next step.
 
-Final output must summarize the PRD source, created tracker issues, completed issues, delivery worktree/branch, verification commands/results, PR URL/review outcome when available, assumptions accepted during delivery, remaining blockers, and any `.scratch` fallback file that still exists.
+Final output must summarize the PRD source, created issues, completed issues, delivery worktree/branch, verification commands/results, PR URL/review outcome when available, assumptions accepted during delivery, and remaining blockers.
