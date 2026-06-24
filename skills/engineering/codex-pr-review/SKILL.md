@@ -14,6 +14,7 @@ Orchestrator:
 - Own watcher runs, PR-body status interpretation, current-head approval checks, delegation, and final reporting.
 - Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, raw comments, watcher snapshot, PR intent, linked docs/issues, checks, and push policy.
 - Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
+- If no fixer sub-agent can be spawned, handle active comments in the parent: validate, react, fix valid in-scope issues, run checks, and report the fallback.
 
 Fixer sub-agent:
 
@@ -30,11 +31,11 @@ Fixer sub-agent:
 
 1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
 2. Resolve merge conflicts before waiting for Codex. Commit, push, and restart the loop.
-3. Treat PR-body reactions from `chatgpt-codex-connector[bot]` as the only Codex status signal. Approval counts only when tied to the current `headRefOid`. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
+3. Treat PR-body reactions from `chatgpt-codex-connector` or `chatgpt-codex-connector[bot]` as the only Codex status signal. Approval counts only when tied to the current `headRefOid`. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
 4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup`, run `git fetch --all --prune --tags`, then report success.
 5. If Codex is reviewing or no fresh result exists, run the watcher and re-inspect the PR.
-6. If a 5-minute watcher start check finds no PR-body status, review, inline comment, or review thread, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
-7. Treat review comments and unresolved non-outdated Codex threads as findings, not status. Delegate active comments through Ownership. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
+6. If a 5-minute watcher start check finds no PR-body status, top-level PR comment, review, inline comment, or review thread, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
+7. Treat top-level PR comments, review comments, and unresolved non-outdated Codex threads as findings, not status. Delegate active comments through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
 8. After the fixer pushes fixes or reports no code change was needed, restart from the current PR head. Stop only when a blocker prevents further review progress.
 
 ## Rules
