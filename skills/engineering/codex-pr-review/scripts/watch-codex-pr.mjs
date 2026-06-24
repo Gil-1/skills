@@ -41,6 +41,7 @@ query WatchCodexPullRequest(
     pullRequest(number: $number) {
       number
       url
+      state
       headRefName
       headRefOid
       baseRefName
@@ -343,7 +344,7 @@ query WatchCodexCommentReactions($id: ID!, $cursor: String) {
 function help() {
   return `Usage: watch-codex-pr.mjs [options]
 
-Poll a GitHub PR until Codex PR status, Codex feedback, or merge state changes.
+Poll a GitHub PR until Codex PR status, Codex feedback, PR state, or mergeability status changes.
 Requires the GitHub CLI to be installed and authenticated.
 
 Options:
@@ -725,6 +726,7 @@ function summarize(pr) {
   return {
     number: pr.number,
     url: pr.url,
+    state: pr.state,
     headRefName: pr.headRefName,
     headRefOid: pr.headRefOid,
     baseRefName: pr.baseRefName,
@@ -751,6 +753,7 @@ function summarize(pr) {
       approvalFreshAfter,
       approvalMatchesCurrentHead,
       status,
+      state: pr.state,
       bodyReactions,
       feedbackItems,
       activeCodexThreads,
@@ -978,6 +981,7 @@ function fingerprint(summary) {
     approvalFreshAfter: summary.approvalFreshAfter,
     approvalMatchesCurrentHead: summary.approvalMatchesCurrentHead,
     status: summary.status,
+    state: summary.state,
     bodyReactions: summary.bodyReactions.map((reaction) => `${reaction.content}:${reaction.createdAt}`),
     mergeStateStatus: summary.mergeStateStatus,
     feedbackItems: summary.feedbackItems.map((item) => [
@@ -1007,6 +1011,7 @@ function immediateEvent(snapshot) {
 
 function changeEvent(previous, current) {
   if (previous.status !== current.status) return "codex_status_changed";
+  if (previous.state !== current.state) return "pr_state_changed";
   if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
   if (previous.fingerprint !== current.fingerprint) return "codex_feedback_changed";
   return undefined;

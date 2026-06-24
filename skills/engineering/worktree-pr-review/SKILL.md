@@ -1,6 +1,6 @@
 ---
 name: worktree-pr-review
-description: Finish completed implementation work from a dedicated git worktree by spawning a publishing sub-agent to commit, push, open a GitHub PR, then running codex-pr-review until Codex validates, merges, blocks, or times out. Use at the end of autopilot delivery runs or any reviewable worktree that should become a PR.
+description: Finish completed implementation work from a dedicated git worktree by spawning a publishing sub-agent to commit, push, open a GitHub PR, then running codex-pr-review until Codex validates, blocks, or times out. Use at the end of autopilot delivery runs or any reviewable worktree that should become a PR.
 ---
 
 # Worktree PR Review
@@ -25,8 +25,8 @@ If no dedicated git worktree exists and code changes already exist in a normal c
 3. Spawn a publishing sub-agent when sub-agent facilities are available. The parent must not perform the commit, push, or PR creation itself in that case. If no sub-agent facility exists, the parent performs the publishing assignment below directly and records that it used the parent-agent fallback.
 4. Give the sub-agent or parent-agent fallback the assignment listed below.
 5. After publishing completes, verify the PR URL with `gh pr view`, confirm the branch pushed, and check the worktree status.
-6. Load `codex-pr-review` in the PR worktree and follow it until Codex validates/merges, blocks on GitHub, or the review loop times out.
-7. Update the parent run state with PR URL, branch, commit SHAs, checks, review status, merge/fetch status, and remaining blockers.
+6. Load `codex-pr-review` in the PR worktree and follow it until Codex validates, blocks on GitHub, or the review loop times out. Record the review result.
+7. Update the parent run state with PR URL, branch, commit SHAs, checks, review status, PR state, fetch status, and remaining blockers.
 
 ## Publishing Assignment
 
@@ -35,7 +35,7 @@ Include:
 - Worktree path, base branch, target branch, and remote name.
 - Delivery summary, PRD/issues, relevant documents, acceptance criteria status, and verification evidence.
 - Known blockers/assumptions and whether the PR should be draft.
-- Repo rules for commit messages, PR templates, merge method, and protected branches.
+- Repo rules for commit messages, PR templates, and protected branches.
 - Clear instruction not to revert unrelated changes or include ambiguous files.
 - Required handoff: PR URL, branch, commits, files included/excluded, checks run/results, draft/ready status, and blockers.
 
@@ -53,5 +53,5 @@ The sub-agent must:
 
 - Do not deploy, publish releases, run shared migrations, or perform production side effects.
 - Do not force-push unless repo policy explicitly requires it and the parent approves from evidence.
-- Do not merge directly; leave merge behavior to `codex-pr-review`.
+- Use `codex-pr-review` for validation status, Codex feedback handling, pushed fixes, and final PR state.
 - If GitHub auth, remotes, base branch, or PR permissions are missing, stop with the smallest actionable blocker.
