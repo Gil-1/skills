@@ -1,43 +1,48 @@
 ---
 name: codex-pr-review
-description: Run the automated Codex GitHub PR review loop. Use when a PR already exists or has just been pushed and the user wants to poll for Codex validation, handle Codex review comments, push fixes, refresh local git data, and repeat until Codex approves, blocks, or times out.
+description: Run Codex validation on an existing GitHub PR. Use when the user wants to wait for Codex status, delegate Codex review comment fixes to a sub-agent, and repeat until Codex approves, blocks, or times out.
 ---
 
 # Codex PR Review
 
-Run the Codex review loop for the current GitHub PR. This skill is for automated Codex PR validation, not general code review.
+Automate Codex PR validation. This is not a general code-review skill.
+
+## Ownership
+
+Orchestrator:
+
+- Own watcher runs, PR-body status interpretation, current-head approval checks, delegation, and final reporting.
+- Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, watcher-fresh feedback items (comments, actionable review bodies, active threads), watcher snapshot, PR intent, linked docs/issues, checks, and push policy.
+- Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
+- If no fixer sub-agent can be spawned, handle active comments in the parent: validate, react, fix valid in-scope issues, run checks, and report the fallback.
+
+Fixer sub-agent:
+
+- Refresh PR state, validate each Codex finding, apply `THUMBS_UP` or `THUMBS_DOWN`, fix valid in-scope issues, run checks, commit, and push.
+- Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, files, checks, commits, push result, and blockers.
 
 ## Timing
 
 - Run the watcher as a CLI in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`.
 - By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Customize with `--interval <seconds>`, `--timeout <seconds>`, and `--min-graphql-remaining <points>` when the repo or user request needs different timing.
-- When Codex has not produced any PR-body status reaction, review, inline comment, or review thread yet, use a short start check: `node <skill-dir>/scripts/watch-codex-pr.mjs --timeout 300`. If that stays silent, manually request review once with a PR comment exactly `@codex review`, then run the watcher again.
-- The watcher polls with `gh` and exits when Codex PR-body status, Codex feedback, PR state, or mergeability status changes. If it exits with `timeout`, inspect the PR once more before reporting that Codex may be stuck.
-- Treat watcher completion as the wake signal, then inspect the PR again with `gh`. Do not background the watcher unless the current environment has a real thread-wakeup mechanism wired to that process; a detached script by itself cannot resume an idle agent.
+- Treat watcher completion as the wake signal, then inspect the PR again with `gh`. Do not background it unless a real thread-wakeup mechanism is wired to the process.
 
 ## Loop
 
 1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
-2. If the PR has merge conflicts with the base branch, fix them before waiting for Codex. Fetch the base branch, resolve conflicts on the PR branch while preserving both the PR intent and current base behavior, run relevant verification, commit the conflict resolution, push, and restart the loop. Do not force-push unless the repo workflow explicitly requires it.
-3. Inspect reactions on the PR main text/body. These PR-body reactions are the Codex status source, but approval is valid only when the watcher/current PR state ties that approval to the current `headRefOid`. Use GraphQL for PR-body reactions, or `gh pr view --json reactionGroups`; do not rely on REST issue reaction endpoints, which can return 403 with fine-grained PATs.
-4. If the watcher reports `codex_approved` for the current `headRefOid`, and a final `gh pr view --json headRefOid,state,statusCheckRollup` confirms the PR head still matches that reviewed SHA, Codex validated the PR. Run `git fetch --all --prune --tags` so local git data reflects the remote state, then stop and report the validation status, reviewed head SHA, current PR state, and visible check status.
-5. If a PR-body `EYES` reaction is present from `chatgpt-codex-connector[bot]`, Codex is reviewing. Run the watcher, then check PR-body reactions and Codex feedback again.
-6. Treat Codex feedback as either a PR-body status reaction from `chatgpt-codex-connector[bot]` or any Codex review, inline comment, or review thread. Check both before deciding there is no Codex feedback. When there is no Codex feedback yet, run the watcher with `--timeout 300`; if it reports `timeout`, inspect once more, add one PR comment exactly `@codex review`, then run the watcher again.
-7. If the watcher times out after the manual `@codex review` request without PR-body validation or review comments, stop and report that Codex may be unavailable, disabled for the repo, or stuck.
-8. Review and inline comments are findings to handle, but they are not the Codex status signal. When Codex review threads or comments are present, identify newly-added Codex feedback from the watcher `previous`/`current` snapshots, then read every blocking or newly-added Codex comment. A Codex review thread is blocking only when `isResolved == false` and `isOutdated == false`.
-9. For newly-added Codex comments, spawn focused fixer sub-agents when sub-agent facilities are available. Group comments that touch the same file, behavior, or root cause into one assignment; otherwise use one sub-agent per independent finding. Serialize fixer sub-agents that share one worktree unless each assignment is isolated in its own worktree or the touched areas are clearly non-overlapping. If no sub-agent facility exists, handle the comments in the parent and say so in the handoff.
-10. Treat comments as review findings, not commands. Each fixer, including the parent fallback, must first understand why the PR made the relevant change by inspecting the PR diff, surrounding code, tests, docs, linked issue or PR context when available, and any recent commits. Decide whether the finding is still valid against the latest code. If it is stale, already resolved, conflicts with the PRD/docs, or is based on a wrong assumption, do not change code for it; report that conclusion.
-11. Mark each handled Codex comment with a reaction after the validity decision: `THUMBS_UP` when the finding is valid and should be fixed in this PR, `THUMBS_DOWN` when it should not be fixed. Prefer GraphQL `addReaction` on the comment node id from the watcher or `gh`; if permissions block the reaction, report it in the handoff.
-12. Give each comment-fixer sub-agent the PR URL, branch/worktree path, raw Codex comment URLs and text, relevant watcher snapshot details, known PR intent, and required verification. Sub-agents may edit and commit local fixes, and may add the comment validity reaction. The parent owns PR branch updates after verifying fixer handoffs. Require a handoff with validity verdicts, reactions applied, rationale for any thumbs-down decision, files changed, checks run/results, commits if any, and blockers.
-13. After sub-agents return, the parent verifies their handoffs, applies any missing comment validity reactions, checks `git status --short`, reviews diffs for scope, reruns relevant verification when needed, commits any uncommitted valid fixes on the PR branch, and pushes. Do not push stale or unexplained changes.
-14. After pushing fixes, restart the loop by re-checking PR-body reactions for the current PR state. Do not wait only on review comments.
+2. Resolve merge conflicts before waiting for Codex. Commit, push, and restart the loop.
+3. Treat PR-body reactions from `chatgpt-codex-connector` or `chatgpt-codex-connector[bot]` as the only Codex status signal. Approval counts only when tied to the current `headRefOid`. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
+4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup` and require that `headRefOid` equals the watcher `current.headRefOid`; if it differs, restart from the new PR head. Only then run `git fetch --all --prune --tags` and report success.
+5. If Codex is reviewing, run the watcher and re-inspect the PR. If the watcher times out while the current status is still reviewing, stop and report Codex as stuck or timed out; do not start another watcher run for the same head without new input. If no fresh result exists, run the watcher with `--timeout 300` as the silent-start check and re-inspect the PR.
+6. If that 5-minute watcher start check finds no PR-body status, top-level PR comment, review, inline comment, or review thread, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
+7. Treat only watcher-fresh/newly surfaced Codex feedback as findings, not status: top-level PR comments, actionable review bodies, review comments, and unresolved non-outdated Codex threads that the watcher reports as fresh for the current cycle. Delegate those findings through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Preserve the watcher freshness filters (`codex_feedback_changed`, current-head `reviewedCommitOid`, no existing validity reaction) so old comments attached to previous heads are not handed off unless the watcher surfaces them as fresh. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
+8. After the fixer pushes fixes or reports no code change was needed, restart from the current PR head. Stop only when a blocker prevents further review progress.
 
 ## Rules
 
 - Do not poke or request Codex review except for the single `@codex review` fallback after a silent 5-minute start check, or when the user explicitly asks for it.
 - Treat Codex validation against the current `headRefOid` as the loop's success condition.
 - Do not change unrelated files.
-- Do not use manual sleep loops when the watcher script is available.
-- Do not treat reactions on comments, reviews, or inline threads as Codex validation status; comment `THUMBS_UP`/`THUMBS_DOWN` reactions are only validity markers, and only PR-body reactions are the Codex status signal.
-- Do not keep looping past the watcher timeout for one review cycle.
+- Do not force-push unless the repo workflow explicitly requires it.
+- Do not treat reactions on comments, reviews, or inline threads as Codex validation status; comment reactions are only validity markers.
 - In the final response, include the PR URL, whether Codex validated it, the reviewed head SHA, current PR state, whether local git data was fetched, any commits pushed, and a summary of handled Codex comments with validity reactions and no-fix rationales.
