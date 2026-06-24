@@ -45,14 +45,6 @@ query WatchCodexPullRequest(
       headRefOid
       baseRefName
       mergeStateStatus
-      commits(last: 1) {
-        nodes {
-          commit {
-            oid
-            pushedDate
-          }
-        }
-      }
       timelineItems(last: 100, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
         nodes {
           __typename
@@ -492,6 +484,37 @@ function retryAfterMs(error) {
   return seconds * 1000;
 }
 
+async function waitAfterGraphqlRateLimit(error, options, secondaryBackoffMs) {
+  if (!isGraphqlRateLimitError(error)) throw error;
+  if (isGraphqlSecondaryRateLimitError(error)) {
+    const waitMs = retryAfterMs(error) ?? secondaryBackoffMs;
+    const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
+    process.stderr.write(`watch-codex-pr: GitHub GraphQL secondary rate limit hit; waiting up to ${waitSeconds}s before retry\n`);
+    await sleepWithinDeadline(waitMs, options, "GitHub GraphQL secondary rate limit wait");
+    return Math.min(secondaryBackoffMs * 2, MAX_SECONDARY_RATE_LIMIT_BACKOFF_MS);
+  }
+  const rate = await graphqlRateLimit();
+  const waitMs = rateLimitWaitMs(rate);
+  if (waitMs <= 0) throw error;
+  const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
+  const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
+  process.stderr.write(`watch-codex-pr: GitHub GraphQL rate limit hit; waiting up to ${waitSeconds}s for reset at ${resetAt}\n`);
+  await sleepWithinDeadline(waitMs, options, "GitHub GraphQL rate limit wait");
+  return secondaryBackoffMs;
+}
+
+async function ghJsonRateAware(args, options) {
+  let secondaryBackoffMs = SECONDARY_RATE_LIMIT_BACKOFF_MS;
+  for (;;) {
+    await waitForGraphqlBudget(options);
+    try {
+      return await ghJson(args);
+    } catch (error) {
+      secondaryBackoffMs = await waitAfterGraphqlRateLimit(error, options, secondaryBackoffMs);
+    }
+  }
+}
+
 async function readSnapshotRateAware(target, options) {
   let secondaryBackoffMs = SECONDARY_RATE_LIMIT_BACKOFF_MS;
   for (;;) {
@@ -499,39 +522,31 @@ async function readSnapshotRateAware(target, options) {
     try {
       return await readSnapshot(target);
     } catch (error) {
-      if (!isGraphqlRateLimitError(error)) throw error;
-      if (isGraphqlSecondaryRateLimitError(error)) {
-        const waitMs = retryAfterMs(error) ?? secondaryBackoffMs;
-        const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
-        process.stderr.write(`watch-codex-pr: GitHub GraphQL secondary rate limit hit; waiting up to ${waitSeconds}s before retry\n`);
-        await sleepWithinDeadline(waitMs, options, "GitHub GraphQL secondary rate limit wait");
-        secondaryBackoffMs = Math.min(secondaryBackoffMs * 2, MAX_SECONDARY_RATE_LIMIT_BACKOFF_MS);
-        continue;
-      }
-      const rate = await graphqlRateLimit();
-      const waitMs = rateLimitWaitMs(rate);
-      if (waitMs <= 0) throw error;
-      const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
-      const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
-      process.stderr.write(`watch-codex-pr: GitHub GraphQL rate limit hit; waiting up to ${waitSeconds}s for reset at ${resetAt}\n`);
-      await sleepWithinDeadline(waitMs, options, "GitHub GraphQL rate limit wait");
+      secondaryBackoffMs = await waitAfterGraphqlRateLimit(error, options, secondaryBackoffMs);
     }
   }
 }
 
 async function resolveTarget(options) {
   const fromUrl = options.pr ? parsePrUrl(options.pr) : undefined;
-  const repo = options.repo ?? fromUrl?.repo ?? (await currentRepo());
+  const repo = options.repo ?? fromUrl?.repo ?? (await currentRepo(options));
+  const number = fromUrl?.number ?? parsePrNumber(options.pr);
+  if (number) return targetFromNumber(repo, number);
+
   const prViewArgs = ["pr", "view"];
   if (options.pr) prViewArgs.push(options.pr);
   prViewArgs.push("--repo", repo, "--json", "number,url");
-  const pr = await ghJson(prViewArgs);
+  const pr = await ghJsonRateAware(prViewArgs, options);
+  return targetFromNumber(repo, pr.number, pr.url);
+}
+
+function targetFromNumber(repo, number, url = `https://github.com/${repo}/pull/${number}`) {
   return {
     repo,
     owner: repo.split("/")[0],
     name: repo.split("/").slice(1).join("/"),
-    number: pr.number,
-    url: pr.url,
+    number,
+    url,
   };
 }
 
@@ -544,8 +559,13 @@ function parsePrUrl(value) {
   };
 }
 
-async function currentRepo() {
-  const repo = await ghJson(["repo", "view", "--json", "nameWithOwner"]);
+function parsePrNumber(value) {
+  if (!value || !/^\d+$/.test(String(value))) return undefined;
+  return Number.parseInt(value, 10);
+}
+
+async function currentRepo(options) {
+  const repo = await ghJsonRateAware(["repo", "view", "--json", "nameWithOwner"], options);
   if (!repo.nameWithOwner) throw new Error("Could not determine the current GitHub repository.");
   return repo.nameWithOwner;
 }
@@ -658,7 +678,8 @@ async function readNodeConnectionPages(query, nodeId, initialConnection, connect
 function summarize(pr) {
   const latestReviewRequestAt = latestCodexReviewRequestAt(pr.comments?.nodes ?? []);
   const currentHeadReview = latestCurrentHeadCodexReview(pr.reviews?.nodes ?? [], pr.headRefOid, latestReviewRequestAt);
-  const headRefPushedAt = latestHeadCommitPushedAt(pr);
+  // Commit pushedDate is not PR head movement time, so do not use it for approval freshness.
+  const headRefPushedAt = null;
   const statusFreshAfter = latestReviewRequestAt;
   const bodyReactions = (pr.reactions?.nodes ?? [])
     .filter((reaction) => isCodexBotLogin(reaction.user?.login))
@@ -698,8 +719,7 @@ function summarize(pr) {
   );
   const approvalFreshAfter = newestTimestamp(statusFreshAfter, currentHeadReview?.submittedAt, freshFeedbackAt);
   const approvalMatchesCurrentHead = Boolean(currentHeadReview)
-    || reviewRequestCoversHead(pr, latestReviewRequestAt)
-    || approvalReactionCoversHead(bodyReactions, headRefPushedAt);
+    || reviewRequestCoversHead(pr, latestReviewRequestAt);
   const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, approvalMatchesCurrentHead);
 
   return {
@@ -759,19 +779,6 @@ function codexStatusFromReactions(bodyReactions, statusFreshAfter, approvalMatch
     return "other-reaction";
   }
   return "none";
-}
-
-function latestHeadCommitPushedAt(pr) {
-  const commit = (pr.commits?.nodes ?? []).at(-1)?.commit;
-  return commit?.pushedDate ?? null;
-}
-
-function approvalReactionCoversHead(bodyReactions, headRefPushedAt) {
-  if (!headRefPushedAt) return false;
-  const newestApproval = bodyReactions
-    .filter((reaction) => reaction.content === "THUMBS_UP")
-    .at(-1);
-  return Boolean(newestApproval && isFreshTimestamp(newestApproval.createdAt, headRefPushedAt));
 }
 
 function reviewRequestCoversHead(pr, latestReviewRequestAt) {
@@ -1015,20 +1022,21 @@ function printResult(result) {
 }
 
 async function watch(options) {
-  const target = await resolveTarget(options);
   const startedAt = Date.now();
   const intervalMs = options.intervalSeconds * 1000;
   const timeoutMs = options.timeoutSeconds * 1000;
   const rateAwareOptions = { ...options, deadlineMs: startedAt + timeoutMs };
+  let target;
   let initial;
 
   try {
+    target = await resolveTarget(rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     printResult({
       event: "timeout",
-      target,
+      target: target ?? null,
       elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
       polls: 0,
       previous: null,
@@ -1061,7 +1069,6 @@ async function watch(options) {
   while (Date.now() - startedAt < timeoutMs) {
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     await sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
-    if (Date.now() - startedAt >= timeoutMs) break;
     polls += 1;
 
     try {
