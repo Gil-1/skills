@@ -9,11 +9,20 @@ const execFileAsync = promisify(execFile);
 const BOT_LOGINS = new Set(["chatgpt-codex-connector", "chatgpt-codex-connector[bot]"]);
 const DEFAULT_INTERVAL_SECONDS = 120;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
-const DEFAULT_MIN_GRAPHQL_REMAINING = 1000;
+const DEFAULT_MIN_GRAPHQL_REMAINING = 100;
 const MAX_BUFFER = 10 * 1024 * 1024;
 const RATE_LIMIT_RESET_SAFETY_MS = 5000;
+const SECONDARY_RATE_LIMIT_BACKOFF_MS = 60 * 1000;
+const MAX_SECONDARY_RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 
 const STATUS_REACTION_CONTENTS = new Set(["EYES", "THUMBS_UP"]);
+
+class WatcherTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "WatcherTimeoutError";
+  }
+}
 
 const QUERY = `
 query WatchCodexPullRequest(
@@ -41,7 +50,6 @@ query WatchCodexPullRequest(
           commit {
             oid
             pushedDate
-            committedDate
           }
         }
       }
@@ -352,7 +360,7 @@ Options:
   --interval <seconds>    Poll interval. Default: ${DEFAULT_INTERVAL_SECONDS}.
   --timeout <seconds>     Maximum time to wait. Default: ${DEFAULT_TIMEOUT_SECONDS}.
   --min-graphql-remaining <points>
-                          Wait for reset before polling when GraphQL budget is below this. Default: ${DEFAULT_MIN_GRAPHQL_REMAINING}.
+                          Wait for primary reset before polling when GraphQL budget is below this. Default: ${DEFAULT_MIN_GRAPHQL_REMAINING}.
   --once                  Print the current summarized state and exit.
   --help                  Show this help.
 `;
@@ -426,6 +434,24 @@ function rateLimitWaitMs(rate) {
   return Math.max(0, resetSeconds * 1000 - Date.now() + RATE_LIMIT_RESET_SAFETY_MS);
 }
 
+function deadlineRemainingMs(options) {
+  const deadlineMs = Number(options.deadlineMs);
+  if (!Number.isFinite(deadlineMs)) return undefined;
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+function cappedWaitMs(waitMs, options) {
+  const remainingMs = deadlineRemainingMs(options);
+  if (remainingMs === undefined) return waitMs;
+  return Math.min(waitMs, remainingMs);
+}
+
+async function sleepWithinDeadline(waitMs, options, reason) {
+  const cappedMs = cappedWaitMs(waitMs, options);
+  if (cappedMs > 0) await sleep(cappedMs);
+  if (cappedMs < waitMs) throw new WatcherTimeoutError(`${reason} exceeded watcher timeout`);
+}
+
 async function waitForGraphqlBudget(options) {
   const minRemaining = Number(options.minGraphqlRemaining || 0);
   if (minRemaining <= 0) return;
@@ -435,28 +461,60 @@ async function waitForGraphqlBudget(options) {
   const waitMs = rateLimitWaitMs(rate);
   if (waitMs <= 0) return;
   const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
-  process.stderr.write(`watch-codex-pr: GitHub GraphQL remaining=${remaining} below ${minRemaining}; waiting until ${resetAt}\n`);
-  await sleep(waitMs);
+  const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
+  process.stderr.write(`watch-codex-pr: GitHub GraphQL remaining=${remaining} below ${minRemaining}; waiting up to ${waitSeconds}s for reset at ${resetAt}\n`);
+  await sleepWithinDeadline(waitMs, options, "GitHub GraphQL budget wait");
+}
+
+function errorText(error) {
+  return [error?.stderr, error?.stdout, error?.message, error]
+    .filter(Boolean)
+    .map(String)
+    .join("\n");
 }
 
 function isGraphqlRateLimitError(error) {
-  const text = String(error?.stderr || error?.stdout || error?.message || error || "");
-  return /API rate limit exceeded/i.test(text) || /graphql.*rate limit/i.test(text);
+  const text = errorText(error);
+  return /API rate limit exceeded/i.test(text)
+    || /graphql.*rate limit/i.test(text)
+    || isGraphqlSecondaryRateLimitError(error);
+}
+
+function isGraphqlSecondaryRateLimitError(error) {
+  return /secondary rate limit|abuse detection|too many requests/i.test(errorText(error));
+}
+
+function retryAfterMs(error) {
+  const match = errorText(error).match(/retry-after:\s*(\d+)/i);
+  if (!match) return undefined;
+  const seconds = Number.parseInt(match[1], 10);
+  if (!Number.isInteger(seconds) || seconds <= 0) return undefined;
+  return seconds * 1000;
 }
 
 async function readSnapshotRateAware(target, options) {
+  let secondaryBackoffMs = SECONDARY_RATE_LIMIT_BACKOFF_MS;
   for (;;) {
     await waitForGraphqlBudget(options);
     try {
       return await readSnapshot(target);
     } catch (error) {
       if (!isGraphqlRateLimitError(error)) throw error;
+      if (isGraphqlSecondaryRateLimitError(error)) {
+        const waitMs = retryAfterMs(error) ?? secondaryBackoffMs;
+        const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
+        process.stderr.write(`watch-codex-pr: GitHub GraphQL secondary rate limit hit; waiting up to ${waitSeconds}s before retry\n`);
+        await sleepWithinDeadline(waitMs, options, "GitHub GraphQL secondary rate limit wait");
+        secondaryBackoffMs = Math.min(secondaryBackoffMs * 2, MAX_SECONDARY_RATE_LIMIT_BACKOFF_MS);
+        continue;
+      }
       const rate = await graphqlRateLimit();
       const waitMs = rateLimitWaitMs(rate);
       if (waitMs <= 0) throw error;
       const resetAt = rate?.reset ? new Date(Number(rate.reset) * 1000).toISOString() : "unknown";
-      process.stderr.write(`watch-codex-pr: GitHub GraphQL rate limit hit; waiting until ${resetAt}\n`);
-      await sleep(waitMs);
+      const waitSeconds = Math.ceil(cappedWaitMs(waitMs, options) / 1000);
+      process.stderr.write(`watch-codex-pr: GitHub GraphQL rate limit hit; waiting up to ${waitSeconds}s for reset at ${resetAt}\n`);
+      await sleepWithinDeadline(waitMs, options, "GitHub GraphQL rate limit wait");
     }
   }
 }
@@ -705,7 +763,7 @@ function codexStatusFromReactions(bodyReactions, statusFreshAfter, approvalMatch
 
 function latestHeadCommitPushedAt(pr) {
   const commit = (pr.commits?.nodes ?? []).at(-1)?.commit;
-  return commit?.pushedDate ?? commit?.committedDate ?? null;
+  return commit?.pushedDate ?? null;
 }
 
 function approvalReactionCoversHead(bodyReactions, headRefPushedAt) {
@@ -961,7 +1019,24 @@ async function watch(options) {
   const startedAt = Date.now();
   const intervalMs = options.intervalSeconds * 1000;
   const timeoutMs = options.timeoutSeconds * 1000;
-  const initial = await readSnapshotRateAware(target, options);
+  const rateAwareOptions = { ...options, deadlineMs: startedAt + timeoutMs };
+  let initial;
+
+  try {
+    initial = await readSnapshotRateAware(target, rateAwareOptions);
+  } catch (error) {
+    if (!(error instanceof WatcherTimeoutError)) throw error;
+    printResult({
+      event: "timeout",
+      target,
+      elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
+      polls: 0,
+      previous: null,
+      current: null,
+      reason: error.message,
+    });
+    return;
+  }
 
   if (options.once) {
     printResult({ event: "snapshot", target, current: slim(initial) });
@@ -982,12 +1057,19 @@ async function watch(options) {
   }
 
   let polls = 1;
+  let current = initial;
   while (Date.now() - startedAt < timeoutMs) {
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     await sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
+    if (Date.now() - startedAt >= timeoutMs) break;
     polls += 1;
 
-    const current = await readSnapshotRateAware(target, options);
+    try {
+      current = await readSnapshotRateAware(target, rateAwareOptions);
+    } catch (error) {
+      if (!(error instanceof WatcherTimeoutError)) throw error;
+      break;
+    }
     const event = immediateEvent(current) ?? changeEvent(initial, current);
     if (event) {
       printResult({
@@ -1002,7 +1084,6 @@ async function watch(options) {
     }
   }
 
-  const current = await readSnapshotRateAware(target, options);
   printResult({
     event: "timeout",
     target,
