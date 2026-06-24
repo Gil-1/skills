@@ -2,7 +2,7 @@
 
 Installable agent skills for Codex, Claude Code, Cursor, OpenCode, and other agents supported by [`skills`](https://skills.sh/).
 
-I created these workflow skills to compose Matt Pocock's engineering skills into end-to-end automated runs that move from architecture or PRD intent to issues, implementation in git worktrees, verification, implementer-owned GitHub PR publishing, and PR review with minimal hand-holding.
+I created these workflow skills to compose Matt Pocock's engineering skills into end-to-end automated runs that move from architecture or PRD intent to issues, implementation in git worktrees, verification, implementer-owned GitHub PR publishing, and parent-launched PR review with minimal hand-holding.
 
 These skills build on the excellent work in [Matt Pocock's skills repo](https://github.com/mattpocock/skills). Huge thanks to Matt for publishing the workflow skills this repo composes with.
 
@@ -21,8 +21,8 @@ npx skills@latest add Gil-1/skills -g -a "*" --skill "*" --full-depth -y
 
 This installs:
 
-- `architecture-autopilot` - turns architecture improvement candidates into decisions, a PRD, issues, implementation work in git worktrees, verification, implementer-owned PR publishing, and Codex PR review.
-- `prd-to-prod-autopilot` - turns an existing PRD into ready-for-agent implementation issues, normalizes existing tracker work when needed, supervises delivery in git worktrees, verifies the repo, has implementers publish or update PRs, and runs Codex PR review.
+- `architecture-autopilot` - turns architecture improvement candidates into decisions, a PRD, issues, implementation work in git worktrees, verification, implementer-owned PR publishing, and parent-launched Codex PR review.
+- `prd-to-prod-autopilot` - turns an existing PRD into ready-for-agent implementation issues, normalizes existing tracker work when needed, supervises delivery in git worktrees, verifies the repo, has implementers publish or update PRs, then launches fresh Codex PR review sub-agents.
 - `review-fix` - guides a per-issue reviewer/fixer pass that uses `diagnosing-bugs` for defects before final validation.
 - `worktree-pr-review` - standalone helper for a finished worktree that should be pushed, opened as a GitHub PR, and handed to `codex-pr-review`.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, pushes fixes, and loops until Codex validates the PR.
