@@ -17,7 +17,7 @@ Run the Codex review loop for the current GitHub PR. This skill is for automated
 
 ## Loop
 
-1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,reactionGroups`.
+1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
 2. If the PR has merge conflicts with the base branch, fix them before waiting for Codex. Fetch the base branch, resolve conflicts on the PR branch while preserving both the PR intent and current base behavior, run relevant verification, commit the conflict resolution, push, and restart the loop. Do not force-push unless the repo workflow explicitly requires it.
 3. Inspect reactions on the PR main text/body. These PR-body reactions are the Codex status source, but approval is valid only when the watcher/current PR state ties that approval to the current `headRefOid`. Use GraphQL for PR-body reactions, or `gh pr view --json reactionGroups`; do not rely on REST issue reaction endpoints, which can return 403 with fine-grained PATs.
 4. If the watcher reports `codex_approved` for the current `headRefOid`, and a final `gh pr view --json headRefOid,state,statusCheckRollup` confirms the PR head still matches that reviewed SHA, Codex validated the PR. Run `git fetch --all --prune --tags` so local git data reflects the remote state, then stop and report the validation status, reviewed head SHA, current PR state, and visible check status.
