@@ -12,13 +12,13 @@ Automate Codex PR validation. This is not a general code-review skill.
 Orchestrator:
 
 - Own watcher runs, PR-body status interpretation, current-head approval checks, delegation, and final reporting.
-- Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, raw comments, watcher snapshot, PR intent, linked docs/issues, checks, and push policy.
+- Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, watcher-fresh feedback items (comments, actionable review bodies, active threads), watcher snapshot, PR intent, linked docs/issues, checks, and push policy.
 - Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
 - If no fixer sub-agent can be spawned, handle active comments in the parent: validate, react, fix valid in-scope issues, run checks, and report the fallback.
 
 Fixer sub-agent:
 
-- Refresh PR state, validate each Codex comment as a finding, apply `THUMBS_UP` or `THUMBS_DOWN`, fix valid in-scope issues, run checks, commit, and push.
+- Refresh PR state, validate each Codex finding, apply `THUMBS_UP` or `THUMBS_DOWN`, fix valid in-scope issues, run checks, commit, and push.
 - Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, files, checks, commits, push result, and blockers.
 
 ## Timing
@@ -32,10 +32,10 @@ Fixer sub-agent:
 1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
 2. Resolve merge conflicts before waiting for Codex. Commit, push, and restart the loop.
 3. Treat PR-body reactions from `chatgpt-codex-connector` or `chatgpt-codex-connector[bot]` as the only Codex status signal. Approval counts only when tied to the current `headRefOid`. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
-4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup`, run `git fetch --all --prune --tags`, then report success.
-5. If Codex is reviewing or no fresh result exists, run the watcher and re-inspect the PR.
+4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup` and require that `headRefOid` equals the watcher `current.headRefOid`; if it differs, restart from the new PR head. Only then run `git fetch --all --prune --tags` and report success.
+5. If Codex is reviewing or no fresh result exists, run the watcher and re-inspect the PR. If the watcher times out while the current status is still reviewing, stop and report Codex as stuck or timed out; do not start another watcher run for the same head without new input.
 6. If a 5-minute watcher start check finds no PR-body status, top-level PR comment, review, inline comment, or review thread, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
-7. Treat top-level PR comments, review comments, and unresolved non-outdated Codex threads as findings, not status. Delegate active comments through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
+7. Treat only watcher-fresh/newly surfaced Codex feedback as findings, not status: top-level PR comments, actionable review bodies, review comments, and unresolved non-outdated Codex threads that the watcher reports as fresh for the current cycle. Delegate those findings through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Preserve the watcher freshness filters (`codex_feedback_changed`, current-head `reviewedCommitOid`, no existing validity reaction) so old comments attached to previous heads are not handed off unless the watcher surfaces them as fresh. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
 8. After the fixer pushes fixes or reports no code change was needed, restart from the current PR head. Stop only when a blocker prevents further review progress.
 
 ## Rules
