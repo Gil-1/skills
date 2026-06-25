@@ -212,6 +212,174 @@ query WatchCodexPullRequest(
 }
 `;
 
+const CHEAP_STATUS_QUERY = `
+query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number: Int!) {
+  rateLimit {
+    cost
+    limit
+    used
+    remaining
+    resetAt
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      url
+      state
+      headRefName
+      headRefOid
+      baseRefName
+      mergeStateStatus
+      updatedAt
+      timelineItems(last: 100, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
+        nodes {
+          __typename
+          ... on PullRequestCommit {
+            commit {
+              oid
+            }
+          }
+          ... on IssueComment {
+            id
+            createdAt
+            updatedAt
+            author {
+              login
+            }
+          }
+        }
+        pageInfo {
+          hasPreviousPage
+        }
+      }
+      reactions(last: 100) {
+        nodes {
+          content
+          createdAt
+          user {
+            login
+          }
+        }
+        pageInfo {
+          hasPreviousPage
+        }
+      }
+      comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        nodes {
+          id
+          createdAt
+          updatedAt
+          author {
+            login
+          }
+          reactions(first: 20) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+      reviews(last: 100) {
+        nodes {
+          id
+          state
+          submittedAt
+          commit {
+            oid
+          }
+          author {
+            login
+          }
+          reactions(first: 20) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+          comments(first: 100) {
+            nodes {
+              id
+              createdAt
+              updatedAt
+              author {
+                login
+              }
+              reactions(first: 20) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        pageInfo {
+          hasPreviousPage
+        }
+      }
+      reviewThreads(last: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 100) {
+            nodes {
+              id
+              createdAt
+              updatedAt
+              author {
+                login
+              }
+              reactions(first: 20) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        pageInfo {
+          hasPreviousPage
+        }
+      }
+    }
+  }
+}
+`;
+
 const REVIEW_COMMENTS_QUERY = `
 query WatchCodexReviewComments($id: ID!, $cursor: String) {
   node(id: $id) {
@@ -528,6 +696,18 @@ async function readSnapshotRateAware(target, options) {
   }
 }
 
+async function readCheapStatusRateAware(target, options) {
+  let secondaryBackoffMs = SECONDARY_RATE_LIMIT_BACKOFF_MS;
+  for (;;) {
+    await waitForGraphqlBudget(options);
+    try {
+      return await readCheapStatus(target);
+    } catch (error) {
+      secondaryBackoffMs = await waitAfterGraphqlRateLimit(error, options, secondaryBackoffMs);
+    }
+  }
+}
+
 async function resolveTarget(options) {
   const fromUrl = options.pr ? parsePrUrl(options.pr) : undefined;
   const repo = options.repo ?? fromUrl?.repo ?? (await currentRepo(options));
@@ -593,6 +773,24 @@ async function readPullRequestPage(target, cursors = {}) {
   if (!pr) throw new Error(`Could not read PR #${target.number} in ${target.repo}.`);
   pr.viewerLogin = response?.data?.viewer?.login;
   return pr;
+}
+
+async function readCheapStatus(target) {
+  const response = await ghJson([
+    "api",
+    "graphql",
+    "-f",
+    `query=${CHEAP_STATUS_QUERY}`,
+    "-F",
+    `owner=${target.owner}`,
+    "-F",
+    `name=${target.name}`,
+    "-F",
+    `number=${target.number}`,
+  ]);
+  const pr = response?.data?.repository?.pullRequest;
+  if (!pr) throw new Error(`Could not read PR #${target.number} in ${target.repo}.`);
+  return summarizeCheapStatus(pr, response?.data?.rateLimit);
 }
 
 async function readSnapshot(target) {
@@ -760,6 +958,126 @@ function summarize(pr) {
       mergeStateStatus: pr.mergeStateStatus,
     }),
   };
+}
+
+function summarizeCheapStatus(pr, rateLimit) {
+  return {
+    number: pr.number,
+    url: pr.url,
+    state: pr.state,
+    headRefName: pr.headRefName,
+    headRefOid: pr.headRefOid,
+    baseRefName: pr.baseRefName,
+    mergeStateStatus: pr.mergeStateStatus,
+    updatedAt: pr.updatedAt,
+    rateLimit,
+    complete: cheapStatusIsComplete(pr),
+    fingerprint: cheapFingerprint(pr),
+  };
+}
+
+function cheapStatusChanged(previous, current) {
+  // Truncated cheap windows can hide older thread/comment reaction changes, so use the full snapshot path.
+  return !previous || !previous.complete || !current.complete || previous.fingerprint !== current.fingerprint;
+}
+
+function cheapStatusIsComplete(pr) {
+  return !(
+    connectionHasMore(pr.timelineItems)
+    || connectionHasMore(pr.reactions)
+    || connectionHasMore(pr.comments)
+    || connectionHasMore(pr.reviews)
+    || connectionHasMore(pr.reviewThreads)
+    || (pr.comments?.nodes ?? []).some(commentHasMoreReactions)
+    || (pr.reviews?.nodes ?? []).some(reviewHasMoreCheapFeedback)
+    || (pr.reviewThreads?.nodes ?? []).some(threadHasMoreCheapFeedback)
+  );
+}
+
+function connectionHasMore(connection) {
+  return Boolean(connection?.pageInfo?.hasNextPage || connection?.pageInfo?.hasPreviousPage);
+}
+
+function commentHasMoreReactions(comment) {
+  return connectionHasMore(comment.reactions);
+}
+
+function reviewHasMoreCheapFeedback(review) {
+  return connectionHasMore(review.reactions)
+    || connectionHasMore(review.comments)
+    || (review.comments?.nodes ?? []).some(commentHasMoreReactions);
+}
+
+function threadHasMoreCheapFeedback(thread) {
+  return connectionHasMore(thread.comments)
+    || (thread.comments?.nodes ?? []).some(commentHasMoreReactions);
+}
+
+function cheapFingerprint(pr) {
+  return JSON.stringify({
+    state: pr.state,
+    headRefOid: pr.headRefOid,
+    mergeStateStatus: pr.mergeStateStatus,
+    timelineItems: (pr.timelineItems?.nodes ?? []).map(cheapTimelineItem),
+    bodyReactions: (pr.reactions?.nodes ?? [])
+      .filter((reaction) => isCodexBotLogin(reaction.user?.login))
+      .map((reaction) => [normalizeReaction(reaction.content), reaction.createdAt, reaction.user?.login]),
+    comments: (pr.comments?.nodes ?? []).map((comment) => [
+      comment.id,
+      comment.createdAt,
+      comment.updatedAt,
+      comment.author?.login,
+      cheapReactionFingerprint(comment.reactions),
+    ]),
+    reviews: (pr.reviews?.nodes ?? []).map((review) => [
+      review.id,
+      review.state,
+      review.submittedAt,
+      review.commit?.oid,
+      review.author?.login,
+      cheapReactionFingerprint(review.reactions),
+      (review.comments?.nodes ?? []).map((comment) => [
+        comment.id,
+        comment.createdAt,
+        comment.updatedAt,
+        comment.author?.login,
+        cheapReactionFingerprint(comment.reactions),
+      ]),
+    ]),
+    reviewThreads: (pr.reviewThreads?.nodes ?? []).map((thread) => [
+      thread.id,
+      thread.isResolved,
+      thread.isOutdated,
+      thread.path,
+      thread.line,
+      (thread.comments?.nodes ?? []).map((comment) => [
+        comment.id,
+        comment.createdAt,
+        comment.updatedAt,
+        comment.author?.login,
+        cheapReactionFingerprint(comment.reactions),
+      ]),
+    ]),
+    hasMore: {
+      timelineItems: Boolean(pr.timelineItems?.pageInfo?.hasPreviousPage),
+      reactions: Boolean(pr.reactions?.pageInfo?.hasPreviousPage),
+      comments: Boolean(pr.comments?.pageInfo?.hasNextPage),
+      reviews: Boolean(pr.reviews?.pageInfo?.hasPreviousPage),
+      reviewThreads: Boolean(pr.reviewThreads?.pageInfo?.hasPreviousPage),
+    },
+  });
+}
+
+function cheapReactionFingerprint(reactions) {
+  return (reactions?.nodes ?? []).map((reaction) => [normalizeReaction(reaction.content), reaction.user?.login]);
+}
+
+function cheapTimelineItem(item) {
+  if (item.__typename === "PullRequestCommit") return [item.__typename, item.commit?.oid];
+  if (item.__typename === "IssueComment") {
+    return [item.__typename, item.id, item.createdAt, item.updatedAt, item.author?.login];
+  }
+  return [item.__typename];
 }
 
 function normalizeReaction(content) {
@@ -1032,10 +1350,12 @@ async function watch(options) {
   const timeoutMs = options.timeoutSeconds * 1000;
   const rateAwareOptions = { ...options, deadlineMs: startedAt + timeoutMs };
   let target;
+  let lastCheapStatus;
   let initial;
 
   try {
     target = await resolveTarget(rateAwareOptions);
+    if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
@@ -1075,6 +1395,19 @@ async function watch(options) {
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     await sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
     polls += 1;
+
+    let cheapStatus;
+    try {
+      cheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
+    } catch (error) {
+      if (!(error instanceof WatcherTimeoutError)) throw error;
+      break;
+    }
+    if (!cheapStatusChanged(lastCheapStatus, cheapStatus)) {
+      lastCheapStatus = cheapStatus;
+      continue;
+    }
+    lastCheapStatus = cheapStatus;
 
     try {
       current = await readSnapshotRateAware(target, rateAwareOptions);
