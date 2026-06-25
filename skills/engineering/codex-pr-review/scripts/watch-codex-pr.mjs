@@ -231,7 +231,7 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
       baseRefName
       mergeStateStatus
       updatedAt
-      timelineItems(last: 20, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
+      timelineItems(last: 100, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
         nodes {
           __typename
           ... on PullRequestCommit {
@@ -264,7 +264,7 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           hasPreviousPage
         }
       }
-      comments(first: 10, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
           id
           createdAt
@@ -272,12 +272,23 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           author {
             login
           }
+          reactions(first: 20) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
         }
         pageInfo {
           hasNextPage
         }
       }
-      reviews(last: 20) {
+      reviews(last: 100) {
         nodes {
           id
           state
@@ -288,28 +299,75 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           author {
             login
           }
+          reactions(first: 20) {
+            nodes {
+              content
+              user {
+                login
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+          comments(first: 100) {
+            nodes {
+              id
+              createdAt
+              updatedAt
+              author {
+                login
+              }
+              reactions(first: 20) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
         }
         pageInfo {
           hasPreviousPage
         }
       }
-      reviewThreads(last: 50) {
+      reviewThreads(last: 100) {
         nodes {
           id
           isResolved
           isOutdated
           path
           line
-          comments(last: 1) {
+          comments(first: 100) {
             nodes {
               id
+              createdAt
               updatedAt
               author {
                 login
               }
+              reactions(first: 20) {
+                nodes {
+                  content
+                  user {
+                    login
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
             }
             pageInfo {
-              hasPreviousPage
+              hasNextPage
             }
           }
         }
@@ -913,12 +971,46 @@ function summarizeCheapStatus(pr, rateLimit) {
     mergeStateStatus: pr.mergeStateStatus,
     updatedAt: pr.updatedAt,
     rateLimit,
+    complete: cheapStatusIsComplete(pr),
     fingerprint: cheapFingerprint(pr),
   };
 }
 
 function cheapStatusChanged(previous, current) {
-  return !previous || previous.fingerprint !== current.fingerprint;
+  // Truncated cheap windows can hide older thread/comment reaction changes, so use the full snapshot path.
+  return !previous || !previous.complete || !current.complete || previous.fingerprint !== current.fingerprint;
+}
+
+function cheapStatusIsComplete(pr) {
+  return !(
+    connectionHasMore(pr.timelineItems)
+    || connectionHasMore(pr.reactions)
+    || connectionHasMore(pr.comments)
+    || connectionHasMore(pr.reviews)
+    || connectionHasMore(pr.reviewThreads)
+    || (pr.comments?.nodes ?? []).some(commentHasMoreReactions)
+    || (pr.reviews?.nodes ?? []).some(reviewHasMoreCheapFeedback)
+    || (pr.reviewThreads?.nodes ?? []).some(threadHasMoreCheapFeedback)
+  );
+}
+
+function connectionHasMore(connection) {
+  return Boolean(connection?.pageInfo?.hasNextPage || connection?.pageInfo?.hasPreviousPage);
+}
+
+function commentHasMoreReactions(comment) {
+  return connectionHasMore(comment.reactions);
+}
+
+function reviewHasMoreCheapFeedback(review) {
+  return connectionHasMore(review.reactions)
+    || connectionHasMore(review.comments)
+    || (review.comments?.nodes ?? []).some(commentHasMoreReactions);
+}
+
+function threadHasMoreCheapFeedback(thread) {
+  return connectionHasMore(thread.comments)
+    || (thread.comments?.nodes ?? []).some(commentHasMoreReactions);
 }
 
 function cheapFingerprint(pr) {
@@ -935,6 +1027,7 @@ function cheapFingerprint(pr) {
       comment.createdAt,
       comment.updatedAt,
       comment.author?.login,
+      cheapReactionFingerprint(comment.reactions),
     ]),
     reviews: (pr.reviews?.nodes ?? []).map((review) => [
       review.id,
@@ -942,6 +1035,14 @@ function cheapFingerprint(pr) {
       review.submittedAt,
       review.commit?.oid,
       review.author?.login,
+      cheapReactionFingerprint(review.reactions),
+      (review.comments?.nodes ?? []).map((comment) => [
+        comment.id,
+        comment.createdAt,
+        comment.updatedAt,
+        comment.author?.login,
+        cheapReactionFingerprint(comment.reactions),
+      ]),
     ]),
     reviewThreads: (pr.reviewThreads?.nodes ?? []).map((thread) => [
       thread.id,
@@ -951,8 +1052,10 @@ function cheapFingerprint(pr) {
       thread.line,
       (thread.comments?.nodes ?? []).map((comment) => [
         comment.id,
+        comment.createdAt,
         comment.updatedAt,
         comment.author?.login,
+        cheapReactionFingerprint(comment.reactions),
       ]),
     ]),
     hasMore: {
@@ -963,6 +1066,10 @@ function cheapFingerprint(pr) {
       reviewThreads: Boolean(pr.reviewThreads?.pageInfo?.hasPreviousPage),
     },
   });
+}
+
+function cheapReactionFingerprint(reactions) {
+  return (reactions?.nodes ?? []).map((reaction) => [normalizeReaction(reaction.content), reaction.user?.login]);
 }
 
 function cheapTimelineItem(item) {
