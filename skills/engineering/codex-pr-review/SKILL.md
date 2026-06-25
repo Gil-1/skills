@@ -24,7 +24,7 @@ Fixer sub-agent:
 ## Timing
 
 - Run the watcher as a CLI in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`.
-- By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Customize with `--interval <seconds>`, `--timeout <seconds>`, and `--min-graphql-remaining <points>` when the repo or user request needs different timing.
+- By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Regular polls use a cheap GraphQL status check; the watcher only reads the full PR feedback snapshot when that cheap status changes. Customize with `--interval <seconds>`, `--timeout <seconds>`, and `--min-graphql-remaining <points>` when the repo or user request needs different timing.
 - Treat watcher completion as the wake signal, then inspect the PR again with `gh`. Do not background it unless a real thread-wakeup mechanism is wired to the process.
 
 ## Loop
