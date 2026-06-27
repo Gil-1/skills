@@ -4,7 +4,7 @@ description: Evidence-aware grill-with-docs with fewer unnecessary questions.
 disable-model-invocation: true
 ---
 
-Run `/grill-with-docs` with an evidence-first question filter.
+Run a `/grilling` session, using the `/domain-modeling` skill, with an evidence-first question filter.
 
 Before asking the user, decide whether the uncertainty should be:
 
@@ -21,4 +21,4 @@ Default to the simplest recommendation that satisfies the user's constraints. Co
 
 Ask one dependency-changing question at a time. Group up to three independent questions only when answering them together is easier for the user.
 
-Continue maintaining docs as `/grill-with-docs` normally would.
+Continue maintaining docs through `/domain-modeling`.
