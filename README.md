@@ -23,6 +23,7 @@ This installs:
 
 - `architecture-autopilot` - turns architecture improvement candidates into decisions, a PRD, issues, implementation work in git worktrees, verification, implementer-owned PR publishing, and parent-launched Codex PR review.
 - `prd-to-prod-autopilot` - turns an existing PRD into ready-for-agent implementation issues, normalizes existing tracker work when needed, supervises delivery in git worktrees, verifies the repo, has implementers publish or update PRs, then launches fresh Codex PR review sub-agents.
+- `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
 - `review-fix` - guides a per-issue reviewer/fixer pass that uses `diagnosing-bugs` for defects before final validation.
 - `worktree-pr-review` - standalone helper for a finished worktree that should be pushed, opened as a GitHub PR, and handed to `codex-pr-review`.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, pushes fixes, and loops until Codex validates the PR.
