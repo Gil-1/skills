@@ -10,6 +10,8 @@ const BOT_LOGINS = new Set(["chatgpt-codex-connector", "chatgpt-codex-connector[
 const DEFAULT_INTERVAL_SECONDS = 120;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
 const DEFAULT_MIN_GRAPHQL_REMAINING = 100;
+const DEFAULT_FEEDBACK_LIMIT = 50;
+const MAX_FEEDBACK_LIMIT = 100;
 const MAX_BUFFER = 10 * 1024 * 1024;
 const RATE_LIMIT_RESET_SAFETY_MS = 5000;
 const SECONDARY_RATE_LIMIT_BACKOFF_MS = 60 * 1000;
@@ -212,14 +214,15 @@ query WatchCodexPullRequest(
 }
 `;
 
-const CHEAP_STATUS_QUERY = `
-query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number: Int!) {
-  rateLimit {
-    cost
-    limit
-    used
-    remaining
-    resetAt
+const WINDOW_QUERY = `
+query WatchCodexPullRequestWindow(
+  $owner: String!,
+  $name: String!,
+  $number: Int!,
+  $feedbackLimit: Int!
+) {
+  viewer {
+    login
   }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -230,8 +233,7 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
       headRefOid
       baseRefName
       mergeStateStatus
-      updatedAt
-      timelineItems(last: 100, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
+      timelineItems(last: $feedbackLimit, itemTypes: [PULL_REQUEST_COMMIT, ISSUE_COMMENT]) {
         nodes {
           __typename
           ... on PullRequestCommit {
@@ -240,9 +242,8 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
             }
           }
           ... on IssueComment {
-            id
+            body
             createdAt
-            updatedAt
             author {
               login
             }
@@ -252,7 +253,7 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           hasPreviousPage
         }
       }
-      reactions(last: 100) {
+      reactions(last: 20) {
         nodes {
           content
           createdAt
@@ -264,9 +265,11 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           hasPreviousPage
         }
       }
-      comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      comments(first: $feedbackLimit, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
           id
+          url
+          body
           createdAt
           updatedAt
           author {
@@ -288,9 +291,11 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           hasNextPage
         }
       }
-      reviews(last: 100) {
+      reviews(last: $feedbackLimit) {
         nodes {
           id
+          url
+          body
           state
           submittedAt
           commit {
@@ -310,9 +315,14 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
               hasNextPage
             }
           }
-          comments(first: 100) {
+          comments(last: $feedbackLimit) {
             nodes {
               id
+              url
+              body
+              path
+              line
+              originalLine
               createdAt
               updatedAt
               author {
@@ -331,7 +341,7 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
               }
             }
             pageInfo {
-              hasNextPage
+              hasPreviousPage
             }
           }
         }
@@ -339,16 +349,18 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
           hasPreviousPage
         }
       }
-      reviewThreads(last: 100) {
+      reviewThreads(last: $feedbackLimit) {
         nodes {
           id
           isResolved
           isOutdated
           path
           line
-          comments(first: 100) {
+          comments(last: $feedbackLimit) {
             nodes {
               id
+              url
+              body
               createdAt
               updatedAt
               author {
@@ -367,8 +379,44 @@ query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number:
               }
             }
             pageInfo {
-              hasNextPage
+              hasPreviousPage
             }
+          }
+        }
+        pageInfo {
+          hasPreviousPage
+        }
+      }
+    }
+  }
+}
+`;
+
+const CHEAP_STATUS_QUERY = `
+query WatchCodexPullRequestCheapStatus($owner: String!, $name: String!, $number: Int!) {
+  rateLimit {
+    cost
+    limit
+    used
+    remaining
+    resetAt
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      url
+      state
+      headRefName
+      headRefOid
+      baseRefName
+      mergeStateStatus
+      updatedAt
+      reactions(last: 20) {
+        nodes {
+          content
+          createdAt
+          user {
+            login
           }
         }
         pageInfo {
@@ -522,6 +570,9 @@ Options:
   --timeout <seconds>     Maximum time to wait. Default: ${DEFAULT_TIMEOUT_SECONDS}.
   --min-graphql-remaining <points>
                           Wait for primary reset before polling when GraphQL budget is below this. Default: ${DEFAULT_MIN_GRAPHQL_REMAINING}.
+  --feedback-limit <items>
+                          Number of recent comments/reviews/threads to inspect in bounded snapshots. Default: ${DEFAULT_FEEDBACK_LIMIT}, max: ${MAX_FEEDBACK_LIMIT}.
+  --full-history          Page through all PR comments/reviews/threads/reactions. Expensive; use only for manual diagnostics.
   --once                  Print the current summarized state and exit.
   --help                  Show this help.
 `;
@@ -534,6 +585,8 @@ function parseArgs(argv) {
     intervalSeconds: DEFAULT_INTERVAL_SECONDS,
     timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
     minGraphqlRemaining: DEFAULT_MIN_GRAPHQL_REMAINING,
+    feedbackLimit: DEFAULT_FEEDBACK_LIMIT,
+    fullHistory: false,
     once: false,
   };
 
@@ -547,7 +600,11 @@ function parseArgs(argv) {
       options.once = true;
       continue;
     }
-    if (["--pr", "--repo", "--interval", "--timeout", "--min-graphql-remaining"].includes(arg)) {
+    if (arg === "--full-history") {
+      options.fullHistory = true;
+      continue;
+    }
+    if (["--pr", "--repo", "--interval", "--timeout", "--min-graphql-remaining", "--feedback-limit"].includes(arg)) {
       const value = argv[i + 1];
       if (!value) throw new Error(`${arg} requires a value`);
       i += 1;
@@ -556,6 +613,7 @@ function parseArgs(argv) {
       if (arg === "--interval") options.intervalSeconds = parsePositiveSeconds(arg, value);
       if (arg === "--timeout") options.timeoutSeconds = parsePositiveSeconds(arg, value);
       if (arg === "--min-graphql-remaining") options.minGraphqlRemaining = parseNonNegativeInteger(arg, value);
+      if (arg === "--feedback-limit") options.feedbackLimit = parseFeedbackLimit(arg, value);
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -573,6 +631,12 @@ function parsePositiveSeconds(name, value) {
 function parseNonNegativeInteger(name, value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative integer`);
+  return parsed;
+}
+
+function parseFeedbackLimit(name, value) {
+  const parsed = parsePositiveSeconds(name, value);
+  if (parsed > MAX_FEEDBACK_LIMIT) throw new Error(`${name} must be ${MAX_FEEDBACK_LIMIT} or less`);
   return parsed;
 }
 
@@ -689,7 +753,7 @@ async function readSnapshotRateAware(target, options) {
   for (;;) {
     await waitForGraphqlBudget(options);
     try {
-      return await readSnapshot(target);
+      return await readSnapshot(target, options);
     } catch (error) {
       secondaryBackoffMs = await waitAfterGraphqlRateLimit(error, options, secondaryBackoffMs);
     }
@@ -775,6 +839,32 @@ async function readPullRequestPage(target, cursors = {}) {
   return pr;
 }
 
+async function readPullRequestWindow(target, feedbackLimit) {
+  const args = [
+    "api",
+    "graphql",
+    "-f",
+    `query=${WINDOW_QUERY}`,
+    "-F",
+    `owner=${target.owner}`,
+    "-F",
+    `name=${target.name}`,
+    "-F",
+    `number=${target.number}`,
+    "-F",
+    `feedbackLimit=${feedbackLimit}`,
+  ];
+
+  const response = await ghJson(args);
+  const pr = response?.data?.repository?.pullRequest;
+  if (!pr) throw new Error(`Could not read PR #${target.number} in ${target.repo}.`);
+  pr.viewerLogin = response?.data?.viewer?.login;
+  pr.snapshotMode = "bounded";
+  pr.snapshotLimit = feedbackLimit;
+  pr.snapshotTruncated = snapshotHasMore(pr);
+  return pr;
+}
+
 async function readCheapStatus(target) {
   const response = await ghJson([
     "api",
@@ -793,7 +883,11 @@ async function readCheapStatus(target) {
   return summarizeCheapStatus(pr, response?.data?.rateLimit);
 }
 
-async function readSnapshot(target) {
+async function readSnapshot(target, options) {
+  if (!options.fullHistory) {
+    return summarize(await readPullRequestWindow(target, options.feedbackLimit));
+  }
+
   const pr = await readPullRequestPage(target);
   pr.reactions = await readConnectionPages(target, pr.reactions, "reactions", "reactionCursor");
   pr.comments = await readConnectionPages(target, pr.comments, "comments", "commentCursor");
@@ -802,8 +896,24 @@ async function readSnapshot(target) {
   await readNestedCommentPages(pr.reviews?.nodes ?? [], REVIEW_COMMENTS_QUERY);
   await readNestedCommentPages(pr.reviewThreads?.nodes ?? [], THREAD_COMMENTS_QUERY);
   await readAllCommentReactionPages(pr);
+  pr.snapshotMode = "full-history";
+  pr.snapshotLimit = null;
+  pr.snapshotTruncated = false;
 
   return summarize(pr);
+}
+
+function snapshotHasMore(pr) {
+  return Boolean(
+    connectionHasMore(pr.timelineItems)
+    || connectionHasMore(pr.reactions)
+    || connectionHasMore(pr.comments)
+    || connectionHasMore(pr.reviews)
+    || connectionHasMore(pr.reviewThreads)
+    || (pr.comments?.nodes ?? []).some(commentHasMoreReactions)
+    || (pr.reviews?.nodes ?? []).some(reviewHasMoreCheapFeedback)
+    || (pr.reviewThreads?.nodes ?? []).some(threadHasMoreCheapFeedback),
+  );
 }
 
 async function readConnectionPages(target, initialConnection, connectionName, cursorName) {
@@ -875,7 +985,10 @@ async function readNodeConnectionPages(query, nodeId, initialConnection, connect
 }
 
 function summarize(pr) {
-  const latestReviewRequestAt = latestCodexReviewRequestAt(pr.comments?.nodes ?? []);
+  const latestReviewRequestAt = latestCodexReviewRequestAt([
+    ...(pr.comments?.nodes ?? []),
+    ...issueCommentsFromTimeline(pr.timelineItems?.nodes ?? []),
+  ]);
   const currentHeadReview = latestCurrentHeadCodexReview(pr.reviews?.nodes ?? [], pr.headRefOid, latestReviewRequestAt);
   // Commit pushedDate is not PR head movement time, so do not use it for approval freshness.
   const headRefPushedAt = null;
@@ -909,9 +1022,16 @@ function summarize(pr) {
   const freshFeedbackItems = feedbackItems.filter((item) =>
     feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
   );
-  const freshActiveCodexThreads = activeCodexThreads.filter((thread) =>
-    thread.comments.some((comment) => activeThreadCommentIsFresh(comment)),
-  );
+  const freshFeedbackItemIds = new Set(freshFeedbackItems.map((item) => item.id));
+  const freshActiveCodexThreads = activeCodexThreads
+    .map((thread) => ({
+      ...thread,
+      comments: thread.comments.filter((comment) =>
+        !freshFeedbackItemIds.has(comment.id)
+        && activeThreadCommentIsFresh(comment, pr.headRefOid, latestReviewRequestAt),
+      ),
+    }))
+    .filter((thread) => thread.comments.length > 0);
   const freshFeedbackAt = newestTimestamp(
     ...freshFeedbackItems.map(feedbackItemTimestamp),
     ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
@@ -929,6 +1049,9 @@ function summarize(pr) {
     headRefOid: pr.headRefOid,
     baseRefName: pr.baseRefName,
     mergeStateStatus: pr.mergeStateStatus,
+    snapshotMode: pr.snapshotMode,
+    snapshotLimit: pr.snapshotLimit,
+    snapshotTruncated: Boolean(pr.snapshotTruncated),
     headRefPushedAt,
     latestReviewRequestAt,
     currentHeadReview,
@@ -940,6 +1063,8 @@ function summarize(pr) {
     bodyReactions,
     feedbackItems,
     activeCodexThreads,
+    freshFeedbackItems,
+    freshActiveCodexThreads,
     feedbackCount: feedbackItems.length,
     activeCodexThreadCount: activeCodexThreads.length,
     freshFeedbackCount: freshFeedbackItems.length,
@@ -971,27 +1096,13 @@ function summarizeCheapStatus(pr, rateLimit) {
     mergeStateStatus: pr.mergeStateStatus,
     updatedAt: pr.updatedAt,
     rateLimit,
-    complete: cheapStatusIsComplete(pr),
+    statusReactionWindowTruncated: Boolean(pr.reactions?.pageInfo?.hasPreviousPage),
     fingerprint: cheapFingerprint(pr),
   };
 }
 
 function cheapStatusChanged(previous, current) {
-  // Truncated cheap windows can hide older thread/comment reaction changes, so use the full snapshot path.
-  return !previous || !previous.complete || !current.complete || previous.fingerprint !== current.fingerprint;
-}
-
-function cheapStatusIsComplete(pr) {
-  return !(
-    connectionHasMore(pr.timelineItems)
-    || connectionHasMore(pr.reactions)
-    || connectionHasMore(pr.comments)
-    || connectionHasMore(pr.reviews)
-    || connectionHasMore(pr.reviewThreads)
-    || (pr.comments?.nodes ?? []).some(commentHasMoreReactions)
-    || (pr.reviews?.nodes ?? []).some(reviewHasMoreCheapFeedback)
-    || (pr.reviewThreads?.nodes ?? []).some(threadHasMoreCheapFeedback)
-  );
+  return !previous || previous.fingerprint !== current.fingerprint;
 }
 
 function connectionHasMore(connection) {
@@ -1018,66 +1129,11 @@ function cheapFingerprint(pr) {
     state: pr.state,
     headRefOid: pr.headRefOid,
     mergeStateStatus: pr.mergeStateStatus,
-    timelineItems: (pr.timelineItems?.nodes ?? []).map(cheapTimelineItem),
+    updatedAt: pr.updatedAt,
     bodyReactions: (pr.reactions?.nodes ?? [])
       .filter((reaction) => isCodexBotLogin(reaction.user?.login))
       .map((reaction) => [normalizeReaction(reaction.content), reaction.createdAt, reaction.user?.login]),
-    comments: (pr.comments?.nodes ?? []).map((comment) => [
-      comment.id,
-      comment.createdAt,
-      comment.updatedAt,
-      comment.author?.login,
-      cheapReactionFingerprint(comment.reactions),
-    ]),
-    reviews: (pr.reviews?.nodes ?? []).map((review) => [
-      review.id,
-      review.state,
-      review.submittedAt,
-      review.commit?.oid,
-      review.author?.login,
-      cheapReactionFingerprint(review.reactions),
-      (review.comments?.nodes ?? []).map((comment) => [
-        comment.id,
-        comment.createdAt,
-        comment.updatedAt,
-        comment.author?.login,
-        cheapReactionFingerprint(comment.reactions),
-      ]),
-    ]),
-    reviewThreads: (pr.reviewThreads?.nodes ?? []).map((thread) => [
-      thread.id,
-      thread.isResolved,
-      thread.isOutdated,
-      thread.path,
-      thread.line,
-      (thread.comments?.nodes ?? []).map((comment) => [
-        comment.id,
-        comment.createdAt,
-        comment.updatedAt,
-        comment.author?.login,
-        cheapReactionFingerprint(comment.reactions),
-      ]),
-    ]),
-    hasMore: {
-      timelineItems: Boolean(pr.timelineItems?.pageInfo?.hasPreviousPage),
-      reactions: Boolean(pr.reactions?.pageInfo?.hasPreviousPage),
-      comments: Boolean(pr.comments?.pageInfo?.hasNextPage),
-      reviews: Boolean(pr.reviews?.pageInfo?.hasPreviousPage),
-      reviewThreads: Boolean(pr.reviewThreads?.pageInfo?.hasPreviousPage),
-    },
   });
-}
-
-function cheapReactionFingerprint(reactions) {
-  return (reactions?.nodes ?? []).map((reaction) => [normalizeReaction(reaction.content), reaction.user?.login]);
-}
-
-function cheapTimelineItem(item) {
-  if (item.__typename === "PullRequestCommit") return [item.__typename, item.commit?.oid];
-  if (item.__typename === "IssueComment") {
-    return [item.__typename, item.id, item.createdAt, item.updatedAt, item.author?.login];
-  }
-  return [item.__typename];
 }
 
 function normalizeReaction(content) {
@@ -1135,6 +1191,10 @@ function latestCodexReviewRequestAt(comments) {
   );
 }
 
+function issueCommentsFromTimeline(items) {
+  return items.filter((item) => item.__typename === "IssueComment");
+}
+
 function isCodexReviewRequest(comment) {
   return /^\s*@codex\s+review\s*$/i.test(comment.body ?? "");
 }
@@ -1180,9 +1240,13 @@ function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewReq
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
 }
 
-function activeThreadCommentIsFresh(item) {
-  // GitHub keeps unresolved, non-outdated threads active across unrelated head changes.
-  return !item.validityReaction;
+function activeThreadCommentIsFresh(item, headRefOid, latestReviewRequestAt) {
+  if (item.validityReaction) return false;
+  if (item.reviewedCommitOid && headRefOid) {
+    return commitMatchesHead(item.reviewedCommitOid, headRefOid)
+      && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
+  }
+  return isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
 }
 
 function feedbackItemTimestamp(item) {
@@ -1198,7 +1262,10 @@ function collectFeedbackItems(pr) {
 
   for (const comment of pr.comments?.nodes ?? []) {
     if (isCodexBotLogin(comment.author?.login) && commentHasActionableBody(comment)) {
-      items.push(summarizeItem("pr_comment", comment, pr.viewerLogin));
+      items.push({
+        ...summarizeItem("pr_comment", comment, pr.viewerLogin),
+        reviewedCommitOid: parseReviewedCommitOid(comment.body),
+      });
     }
   }
 
@@ -1336,8 +1403,22 @@ function changeEvent(previous, current) {
 }
 
 function slim(snapshot) {
-  const { fingerprint: _fingerprint, ...rest } = snapshot;
-  return rest;
+  const {
+    fingerprint: _fingerprint,
+    feedbackItems,
+    activeCodexThreads,
+    freshFeedbackItems,
+    freshActiveCodexThreads,
+    ...rest
+  } = snapshot;
+  return {
+    ...rest,
+    // Public watcher output should hand fixers only fresh work. Total/stale counts remain for diagnostics.
+    feedbackItems: freshFeedbackItems,
+    activeCodexThreads: freshActiveCodexThreads,
+    staleFeedbackCount: feedbackItems.length - freshFeedbackItems.length,
+    staleActiveCodexThreadCount: activeCodexThreads.length - freshActiveCodexThreads.length,
+  };
 }
 
 function printResult(result) {

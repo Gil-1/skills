@@ -12,7 +12,7 @@ Automate Codex PR validation. This is not a general code-review skill.
 Orchestrator:
 
 - Own watcher runs, PR-body status interpretation, current-head approval checks, delegation, and final reporting.
-- Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, watcher-fresh feedback items (comments, actionable review bodies, active threads), watcher snapshot, PR intent, linked docs/issues, checks, and push policy.
+- Send the fixer: PR URL/number, branches, worktree, current `headRefOid`, watcher-fresh `feedbackItems` and `activeCodexThreads` from the watcher output, watcher snapshot counts, PR intent, linked docs/issues, checks, and push policy. Do not pass stale feedback arrays or old Codex history as fixer work.
 - Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
 - If no fixer sub-agent can be spawned, handle active comments in the parent: validate, react, fix valid in-scope issues, run checks, and report the fallback.
 
@@ -24,7 +24,7 @@ Fixer sub-agent:
 ## Timing
 
 - Run the watcher as a CLI in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`.
-- By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Regular polls use a cheap GraphQL status check; the watcher only reads the full PR feedback snapshot when that cheap status changes. Customize with `--interval <seconds>`, `--timeout <seconds>`, and `--min-graphql-remaining <points>` when the repo or user request needs different timing.
+- By default, the watcher polls every 120 seconds for up to 30 minutes and waits for GitHub GraphQL quota to recover when the remaining budget is low. Regular polls use a minimal GraphQL status check containing PR metadata and recent PR-body reactions only. Feedback snapshots are bounded to recent comments/reviews/threads (`--feedback-limit`, default 50) and expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`; total and stale counts remain diagnostic. Use `--full-history` only for manual diagnostics because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
 - Treat watcher completion as the wake signal, then inspect the PR again with `gh`. Do not background it unless a real thread-wakeup mechanism is wired to the process.
 
 ## Loop
@@ -35,12 +35,13 @@ Fixer sub-agent:
 4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup` and require that `headRefOid` equals the watcher `current.headRefOid`; if it differs, restart from the new PR head. Only then run `git fetch --all --prune --tags` and report success.
 5. If Codex is reviewing, run the watcher and re-inspect the PR. If the watcher times out while the current status is still reviewing, stop and report Codex as stuck or timed out; do not start another watcher run for the same head without new input. If no fresh result exists, run the watcher with `--timeout 300` as the silent-start check and re-inspect the PR.
 6. If that 5-minute watcher start check finds no PR-body status, top-level PR comment, review, inline comment, or review thread, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
-7. Treat only watcher-fresh/newly surfaced Codex feedback as findings, not status: top-level PR comments, actionable review bodies, review comments, and unresolved non-outdated Codex threads that the watcher reports as fresh for the current cycle. Delegate those findings through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Preserve the watcher freshness filters (`codex_feedback_changed`, current-head `reviewedCommitOid`, no existing validity reaction) so old comments attached to previous heads are not handed off unless the watcher surfaces them as fresh. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
+7. Treat only watcher-fresh/newly surfaced Codex feedback as findings, not status: the `feedbackItems` and `activeCodexThreads` arrays in the watcher output. These are filtered from top-level PR comments, actionable review bodies, review comments, and unresolved non-outdated Codex threads for the current cycle. Delegate those findings through Ownership when a fixer sub-agent is available; otherwise use the parent fallback. Preserve the watcher freshness filters (`codex_feedback_changed`, current-head `reviewedCommitOid`, no existing validity reaction) so old comments attached to previous heads are not handed off unless the watcher surfaces them as fresh. Prefer one fixer sub-agent; split only for isolated worktrees or clearly non-overlapping fixes with an explicit push order.
 8. After the fixer pushes fixes or reports no code change was needed, restart from the current PR head. Stop only when a blocker prevents further review progress.
 
 ## Rules
 
 - Do not poke or request Codex review except for the single `@codex review` fallback after a silent 5-minute start check, or when the user explicitly asks for it.
+- Do not run the watcher with `--full-history` in normal review loops. If a bounded snapshot is truncated, continue with fresh bounded feedback unless the user explicitly asks to audit old Codex history.
 - Treat Codex validation against the current `headRefOid` as the loop's success condition.
 - Do not change unrelated files.
 - Do not force-push unless the repo workflow explicitly requires it.
