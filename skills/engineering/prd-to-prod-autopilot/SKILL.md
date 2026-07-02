@@ -28,20 +28,29 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 - Answer skill approval checkpoints from evidence when the user asked for autopilot and no true human decision is required.
 - Treat secrets, credentials, legal/business policy, deploy permission, irreversible external actions, and product scope gaps as blockers.
 - Mark blocked work through the configured triage state vocabulary with the smallest targeted question.
-- Assign each code-changing issue worker a unique sibling git worktree/branch named from the issue reference or slug. Default to one issue, one worktree/branch, one PR. Do not let issue workers use the repo's main workspace or a shared worktree unless the target repo's delivery policy explicitly requires one PR for the whole PRD before code-changing work starts. In that single-PR case, use one delivery worktree/branch, serialize code-changing work or final integration into that branch, and publish one PR for the integrated PRD delivery. Do not silently merge child or sibling issue work into another issue's PR. Pass the assigned worktree path and branch to each worker and reviewer/fixer.
 - Creating and pushing GitHub PRs plus parent-launched `codex-pr-review` sub-agents are in scope for autopilot completion unless the user opts out or repo policy forbids it. Do not deploy, publish releases, run shared migrations, or perform production side effects.
+
+## Delivery Topology
+
+Declare the delivery topology before code-changing work starts and pass it to workers and reviewers:
+
+- Independent issue: one issue, worktree, branch, and PR.
+- Dependent issue chain: separate review units; serialize successors until dependencies are available on the target base unless repo policy explicitly supports stacked PRs.
+- Integrated PRD delivery: one worktree, branch, and PR only when repo policy or the user requires it; serialize code-changing work or final integration into that branch.
+
+Under independent and dependent topologies, assign each code-changing issue worker a unique sibling git worktree/branch named from the issue reference or slug.
 
 ## Run Loop
 
-1. Prepare: identify the PRD source, read repo instructions, engineering-skill config, domain docs and ADRs, choose the run slug, choose the per-issue worker worktree/branch naming policy, and record verification commands plus delivery policy.
+1. Prepare: identify the PRD source, read repo instructions, engineering-skill config, domain docs and ADRs, choose the run slug, declare the delivery topology, and record verification commands plus delivery policy.
 2. Create issues: load `to-issues` with the PRD and use the resulting published issues as the work queue unless a slice is explicitly blocked or marked otherwise.
-3. Gate the work queue: before scheduling workers, verify each issue is independently implementable and reviewable. Split or route back to `to-issues` when one slice combines multiple risky axes such as schema or persistence, lifecycle transitions, matching or ranking, update history, concurrency or idempotency, admin/API surfaces, eval fixtures, migrations, or provider/config versioning.
+3. Gate the work queue: before scheduling workers, verify each issue is independently reviewable or explicitly dependent in the delivery topology. Split or route back to `to-issues` when one slice combines multiple risky axes such as schema or persistence, lifecycle transitions, matching or ranking, update history, concurrency or idempotency, admin/API surfaces, eval fixtures, migrations, provider/config versioning, or one likely review hotspot.
 4. Normalize existing work only when needed: if the PRD references pre-existing raw issues, external PRs, missing labels, or conflicting tracker state, load `triage` for those items only.
-5. Schedule workers: run independent `ready-for-agent` items through supervised worker sub-agents inside their assigned worktrees. Launch those sub-agents in parallel whenever the current agent environment supports concurrent work. Serialize only items that have dependencies, likely touch the same risky files, public contracts, migrations, data models, or shared tests.
+5. Schedule workers: run independent `ready-for-agent` items through supervised worker sub-agents inside their assigned worktrees. Launch those sub-agents in parallel whenever the current agent environment supports concurrent work. For dependent chains, run predecessors first and start successors only when the dependency state matches the declared topology. Serialize items that have dependencies, likely touch the same risky files, public contracts, migrations, data models, or shared tests.
 6. Verify slices: require concrete acceptance and command evidence before marking an issue verified. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it.
 7. Review and fix: assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Independent review/fix passes may run in parallel after their implementations are verified. The parent autopilot integrates returned fixes and reruns relevant checks. Have the reviewer/fixer update the issue or PR they are reviewing when durable status changes.
 8. Run the final repo gate: rerun or confirm repo-level checks, audit PRD/issue coverage and blockers, and verify no sub-agent handoff is stale or missing.
-9. Publish and review: after an issue's implementation and review/fix pass are complete, have the implementing worker own the final commit, push, and PR creation or PR update for that issue's code, or integrate completed slices into the single delivery branch when repo policy requires one PR for the whole PRD. If a branch or PR now contains sibling issue work without an explicit integrated-PRD delivery policy, stop and split or reclassify the delivery policy before requesting review. Require a valid Markdown PR body and use non-closing issue references such as `Refs #xxx`; do not use auto-closing keywords such as `Closes`, `Fixes`, or `Resolves` unless the user has explicitly approved issue closure. The implementing worker must comment on the assigned issue with the PR URL when one exists, branch, verification result, acceptance status, and any blocker before returning the PR URL or single-PR integration status, branch, commit, and status handoff, then stop. The parent autopilot then launches a fresh sub-agent with `codex-pr-review` for each published PR. Wait for pending required PR checks. If checks fail or merge blockers appear, spawn or assign an active fixer sub-agent in the same issue or delivery worktree/branch to diagnose, fix, commit, and push; use `diagnosing-bugs` or `resolving-merge-conflicts` when applicable. Then launch a fresh PR-review sub-agent until the PR is ready for human merge, timed out, blocked, or returned as redesign/follow-up. Independent PR review sub-agents may run in parallel.
+9. Publish and review: after an issue's implementation and review/fix pass are complete, have the implementing worker own the final commit, push, and PR creation or PR update for that issue's code, or integrate completed slices into the single delivery branch when the declared topology is integrated PRD delivery. Before requesting review, verify the branch still matches its declared review unit; undeclared sibling issue work is a split/blocker result, not a retroactive integrated-delivery conversion. Require a valid Markdown PR body and use non-closing issue references such as `Refs #xxx`; do not use auto-closing keywords such as `Closes`, `Fixes`, or `Resolves` unless the user has explicitly approved issue closure. The implementing worker must comment on the assigned issue with the PR URL when one exists, branch, verification result, acceptance status, and any blocker before returning the PR URL or single-PR integration status, branch, commit, and status handoff, then stop. The parent autopilot then launches a fresh sub-agent with `codex-pr-review` for each published PR. Wait for pending required PR checks. If checks fail or merge blockers appear, spawn or assign an active fixer sub-agent in the same issue or delivery worktree/branch to diagnose, fix, commit, and push; use `diagnosing-bugs` or `resolving-merge-conflicts` when applicable. Then launch a fresh PR-review sub-agent until the PR is ready for human merge, timed out, blocked, or returned as redesign/follow-up. Independent PR review sub-agents may run in parallel.
 10. Return merge and cleanup decision: report the PRs or single delivery branch ready for human merge, timed out, blocked, or split/redesign follow-up, then ask the user to confirm when merges are done and whether to run post-merge cleanup.
 
 ## Post-Merge Cleanup
@@ -50,7 +59,7 @@ After PRs are merged or the user says merges are done, fetch every PRD child iss
 
 ## Sub-Agent Protocol
 
-Use one issue as the default unit of work and PR review. Split oversized issues before implementation continues. Treat an issue as oversized when it combines multiple risky axes such as persistence, lifecycle states, matching/ranking, update history, concurrency/idempotency, migrations, admin/API surfaces, eval fixtures, or provider/config versioning.
+Use the declared delivery topology as the unit of work and review. The default is one issue/one PR; dependent chains remain separate review units; integrated PRD delivery is only valid when declared before coding. Split oversized issues before implementation continues. Treat an issue as oversized when it combines multiple risky axes, is likely to produce one large hotspot module or test file, or returns repeated review churn from `review-fix` or `codex-pr-review`.
 
 Each worker or reviewer/fixer owns status updates for the issue or PR it is assigned. When durable progress, blockers, verification evidence, or review outcome should be recorded, update that issue or PR directly using the owning skill's conventions. Durable updates include implementation started, PR opened or updated, verification blocked, review passed or failed, and acceptance criteria status. The parent autopilot coordinates sequencing, parallelism, integration, and final gates, but does not maintain a parallel issue-state log or take over implementation/review work just because it can.
 
@@ -60,13 +69,15 @@ Each worker assignment must include only orchestration context not already owned
 - PRD reference and relevant decision context.
 - Current dependency or blocked-by status if it changed since issue creation.
 - Additional verification commands not already captured in the issue.
-- Delivery policy and external-action limits.
+- Delivery topology, review unit, dependency/base assumptions, and external-action limits.
 - Assigned worktree path and branch.
 - Explicit file or responsibility ownership when needed to avoid parallel conflicts.
 - Explicit exclusions for adjacent admin/API/eval or sibling-issue surfaces when they are not in the assigned issue.
 - For stateful backend work, a required pre-edit invariant list covering applicable idempotency, stale data, lifecycle states, source traceability, concurrency, provider/config versioning, rollback, and reprocessing behavior.
+- For language extraction, matching, ranking, or evaluator work, a required table-driven positive/negative example matrix.
+- For hook, event, or adapter work, a required contract matrix covering payload shape, timing/order, idempotency/retries, error handling, and lifecycle cleanup.
 - Reminder that other agents may be editing nearby work, so the worker must not revert unrelated changes.
-- Required handoff: status, changed files, checks run with results, acceptance criteria status, invariant coverage when applicable, assumptions, blockers, integration notes, and publishing details when code was pushed: PR URL, branch, commit SHA(s), draft/ready state, and publishing blockers if any.
+- Required handoff: status, changed files, checks run with results, acceptance criteria status, invariant or matrix coverage when applicable, assumptions, blockers, integration notes, and publishing details when code was pushed: PR URL, branch, commit SHA(s), draft/ready state, and publishing blockers if any.
 - Confirmation that the assigned issue or PR was updated with the durable status above, or the exact reason it could not be updated.
 
 Each reviewer/fixer assignment must provide the review packet expected by `review-fix` and prefer a reviewer who did not implement the issue.
@@ -81,7 +92,7 @@ Do not finish the run until:
 - Every remaining non-implemented issue has the appropriate configured non-agent state or is blocked with the smallest targeted question.
 - Relevant full-repo checks have passed or their remaining failures are explained as pre-existing/out of scope with evidence.
 - Cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance coverage have been checked.
-- Each PR is scoped to one issue, or the run explicitly declared a single integrated PRD delivery branch before code-changing work started.
+- Each PR matches the declared delivery topology: independent issue PR, explicit dependent PR, or integrated PRD branch declared before code-changing work started.
 - Each completed issue with code changes has been committed, pushed, represented in a GitHub PR or the required single delivery PR, and reviewed by a fresh `codex-pr-review` sub-agent. The PR must be ready for human merge, timed out, or blocked with evidence; pending checks, merge blockers, skipped review, or still-running review do not satisfy this gate.
 - Do not clean worktrees or close GitHub issues in the initial completion output unless the user has already asked the orchestrator to close merged issues. After the user confirms the PRD task PRs were merged and no follow-up work remains, reconcile tracker state first, then delete only confirmed issue worktree(s), ask which remaining issues to close, and close only confirmed issues.
 

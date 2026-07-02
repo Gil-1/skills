@@ -13,7 +13,7 @@ Review one implemented issue against the review packet from the parent agent. If
 
 - Compose `diagnosing-bugs` for fixes. This skill decides when a fix is needed; `diagnosing-bugs` defines how to debug and fix it.
 - Review only the assigned issue. Flag oversized or cross-issue concerns instead of broadening ownership.
-- Do not pass review when the diff includes unrelated child or sibling issue work. Report the needed split or integrated-PR policy instead.
+- Require the diff to match the declared review unit. If it contains undeclared child or sibling issue work, return a split/blocker result instead of passing review.
 - State whether you were the original implementer if that matters for review independence.
 - Return a handoff instead of managing shared issue state, tracker labels, or final integration unless explicitly assigned.
 - Fix scoped problems directly when the fix is clearly within the issue's acceptance criteria and safe under repo policy.
@@ -25,7 +25,7 @@ Review one implemented issue against the review packet from the parent agent. If
 
 ### 1. Understand The Assignment
 
-Use the parent-provided review packet. It should include the issue brief, source PRD or design context, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, verification evidence, stated invariants for stateful backend work, known assumptions, and risky files or contracts.
+Use the parent-provided review packet. It should include the issue brief, declared review unit, source PRD or design context, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, verification evidence, stated invariants or matrices when applicable, known assumptions, and risky files or contracts.
 
 If essential context is missing, inspect the repo and issue artifacts first. Ask the parent only when the review cannot be completed from available evidence.
 
@@ -35,11 +35,12 @@ Check:
 
 1. The implementation satisfies the issue and source PRD/design intent.
 2. Acceptance criteria are covered by behavior, tests, docs, or explicit evidence.
-3. The diff is scoped, integrated, and consistent with repo patterns.
+3. The diff matches the declared review unit, is integrated, and is consistent with repo patterns.
 4. Edge cases, data migration paths, public contracts, and error handling were not missed.
 5. Existing tests, lint, build, and smoke checks remain meaningful and were not bypassed.
 6. The worker's stated invariants hold against the diff and evidence.
-7. For stateful backend changes, reruns, stale rows or edited source data, reviewed/discarded lifecycle behavior, and concurrent workers are handled or explicitly out of scope.
+7. Required matrices are present and evidenced for language/evaluator or hook/event/adapter work.
+8. For stateful backend changes, reruns, stale rows or edited source data, reviewed/discarded lifecycle behavior, and concurrent workers are handled or explicitly out of scope.
 
 ### 3. Diagnose And Fix Findings
 
