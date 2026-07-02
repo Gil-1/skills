@@ -1006,31 +1006,39 @@ function summarize(pr) {
   const activeCodexThreads = (pr.reviewThreads?.nodes ?? [])
     .filter((thread) => !thread.isResolved && !thread.isOutdated)
     .filter((thread) => (thread.comments?.nodes ?? []).some((comment) => isCodexBotLogin(comment.author?.login)))
-    .map((thread) => ({
-      id: thread.id,
-      path: thread.path,
-      line: thread.line,
-      comments: (thread.comments?.nodes ?? [])
+    .map((thread) => {
+      const comments = (thread.comments?.nodes ?? [])
         .filter((comment) => isCodexBotLogin(comment.author?.login))
         .map((comment) => ({
           ...summarizeItem("thread_comment", comment, pr.viewerLogin),
           ...reviewCommentContextById.get(comment.id),
           threadIsActive: true,
-        })),
-    }))
+        }));
+      return {
+        id: thread.id,
+        path: thread.path,
+        line: thread.line,
+        priority: highestCodexPriority(comments.map((comment) => comment.priority)),
+        comments,
+      };
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
   const freshFeedbackItems = feedbackItems.filter((item) =>
     feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
   );
   const freshFeedbackItemIds = new Set(freshFeedbackItems.map((item) => item.id));
   const freshActiveCodexThreads = activeCodexThreads
-    .map((thread) => ({
-      ...thread,
-      comments: thread.comments.filter((comment) =>
+    .map((thread) => {
+      const comments = thread.comments.filter((comment) =>
         !freshFeedbackItemIds.has(comment.id)
         && activeThreadCommentIsFresh(comment, pr.headRefOid, latestReviewRequestAt),
-      ),
-    }))
+      );
+      return {
+        ...thread,
+        priority: highestCodexPriority(comments.map((comment) => comment.priority)),
+        comments,
+      };
+    })
     .filter((thread) => thread.comments.length > 0);
   const freshFeedbackAt = newestTimestamp(
     ...freshFeedbackItems.map(feedbackItemTimestamp),
@@ -1138,6 +1146,21 @@ function cheapFingerprint(pr) {
 
 function normalizeReaction(content) {
   return content === "+1" ? "THUMBS_UP" : content;
+}
+
+function codexPriority(body) {
+  const priorities = [...String(body ?? "").matchAll(/\bP([0-3])\b/gi)]
+    .map((match) => `P${match[1]}`);
+  return highestCodexPriority(priorities);
+}
+
+function highestCodexPriority(priorities) {
+  const ranks = priorities
+    .filter(Boolean)
+    .map((priority) => Number(String(priority).slice(1)))
+    .filter(Number.isInteger);
+  if (ranks.length === 0) return null;
+  return `P${Math.min(...ranks)}`;
 }
 
 function compareByDateThenContent(a, b) {
@@ -1342,6 +1365,7 @@ function summarizeItem(kind, item, handlerLogin) {
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     hasBody: Boolean(item.body?.trim()),
+    priority: codexPriority(item.body),
     validityReaction: validityReaction(item.reactions?.nodes ?? [], handlerLogin),
   };
 }
@@ -1375,6 +1399,7 @@ function fingerprint(summary) {
       item.state,
       item.updatedAt,
       item.hasBody,
+      item.priority,
       item.validityReaction?.content,
       item.path,
       item.line,
@@ -1383,7 +1408,8 @@ function fingerprint(summary) {
       thread.id,
       thread.path,
       thread.line,
-      thread.comments.map((comment) => [comment.id, comment.updatedAt, comment.hasBody]),
+      thread.priority,
+      thread.comments.map((comment) => [comment.id, comment.updatedAt, comment.hasBody, comment.priority]),
     ]),
   });
 }
