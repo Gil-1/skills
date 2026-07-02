@@ -17,6 +17,8 @@ const mattPocockDependencies = [
   "grill-with-docs",
   "to-prd",
   "to-issues",
+  "implement",
+  "code-review",
   "triage",
   "diagnosing-bugs",
   "prototype",

@@ -34,12 +34,12 @@ This installs:
 
 ## Matt Pocock Dependencies
 
-The autopilot skills depend on Matt Pocock's current workflow set, including `improve-codebase-architecture`, `codebase-design`, `domain-modeling`, `to-prd`, `to-issues`, `triage`, and `diagnosing-bugs`.
+The autopilot skills depend on Matt Pocock's current workflow set, including `improve-codebase-architecture`, `codebase-design`, `domain-modeling`, `to-prd`, `to-issues`, `implement`, `code-review`, `triage`, and `diagnosing-bugs`.
 
 Install or refresh those dependencies with:
 
 ```bash
-npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill ask-matt --skill improve-codebase-architecture --skill codebase-design --skill domain-modeling --skill grill-me --skill grill-with-docs --skill to-prd --skill to-issues --skill triage --skill diagnosing-bugs --skill prototype --skill tdd --skill handoff --skill grilling --skill writing-great-skills --skill resolving-merge-conflicts --full-depth -y
+npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill ask-matt --skill improve-codebase-architecture --skill codebase-design --skill domain-modeling --skill grill-me --skill grill-with-docs --skill to-prd --skill to-issues --skill implement --skill code-review --skill triage --skill diagnosing-bugs --skill prototype --skill tdd --skill handoff --skill grilling --skill writing-great-skills --skill resolving-merge-conflicts --full-depth -y
 ```
 
 Run `/setup-matt-pocock-skills` once inside your agent for each project you want to use these workflows on.
