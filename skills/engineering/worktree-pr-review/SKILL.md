@@ -1,11 +1,11 @@
 ---
 name: worktree-pr-review
-description: Finish completed implementation work from a dedicated git worktree by spawning a publishing sub-agent to commit, push, open a GitHub PR, then running codex-pr-review until Codex validates, blocks, or times out. Use at the end of autopilot delivery runs or any reviewable worktree that should become a PR.
+description: Finish standalone or recovery work from a dedicated git worktree by spawning a publishing sub-agent to commit, push, open a GitHub PR, then running codex-pr-review until Codex validates, blocks, times out, or returns redesign/follow-up. Use when reviewable work exists outside the normal PRD autopilot publishing gate.
 ---
 
 # Worktree PR Review
 
-Finish reviewable work that already exists in a dedicated git worktree. This skill owns the publishing handoff and Codex review loop; it does not decide product scope or implement new issues.
+Finish reviewable work that already exists in a dedicated git worktree. This skill owns standalone or recovery publishing plus the Codex review loop; it does not decide product scope, implement new issues, or replace the normal `prd-to-prod-autopilot` rule that implementing workers publish their own review units.
 
 ## Inputs
 
@@ -21,7 +21,7 @@ If no dedicated git worktree exists and code changes already exist in a normal c
 ## Workflow
 
 1. Verify the worktree with `git rev-parse --show-toplevel`, `git worktree list`, and `git status --short`. Ensure the worktree is on a non-protected feature branch, preferably `codex/<run-slug>` unless repo policy says otherwise.
-2. If the branch/worktree does not exist yet and no implementation changes have started, create it from the current base with `git worktree add -b codex/<run-slug> <sibling-or-repo-policy-path> <base>`. Record the path in the parent run state.
+2. If the branch/worktree does not exist yet and no implementation changes have started, create it from the current base with `git worktree add -b codex/<run-slug> <sibling-or-repo-policy-path> <base>`. Record the path in the parent run state when one exists.
 3. Verify the declared review unit: inspect the delivery summary and diff. Publish only if the worktree matches the declared topology; if it contains undeclared sibling issue work, stop with a split/blocker result.
 4. Spawn a publishing sub-agent when sub-agent facilities are available. The parent must not perform the commit, push, or PR creation itself in that case. If no sub-agent facility exists, the parent performs the publishing assignment below directly and records that it used the parent-agent fallback.
 5. Give the sub-agent or parent-agent fallback the assignment listed below.

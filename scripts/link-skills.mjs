@@ -26,7 +26,6 @@ const mattPocockDependencies = [
   "handoff",
   "grilling",
   "writing-great-skills",
-  "resolving-merge-conflicts",
 ];
 
 const usage = `Usage:

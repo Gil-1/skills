@@ -25,12 +25,12 @@ This installs:
 - `prd-to-prod-autopilot` - turns an existing PRD into ready-for-agent implementation issues, normalizes existing tracker work when needed, supervises delivery in git worktrees, verifies the repo, has implementers publish or update PRs, then launches fresh Codex PR review sub-agents.
 - `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
 - `review-fix` - guides a per-issue reviewer/fixer pass that uses `diagnosing-bugs` for defects before final validation.
-- `worktree-pr-review` - standalone helper for a finished worktree that should be pushed, opened as a GitHub PR, and handed to `codex-pr-review`.
+- `worktree-pr-review` - standalone/recovery helper for a finished worktree that sits outside the normal PRD autopilot publishing gate and should be pushed, opened as a GitHub PR, and handed to `codex-pr-review`.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, pushes fixes, and loops until Codex validates the PR.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
-- `game-improvement-loop` - runs validated Shellsong game-improvement cycles through PRD, implementation, and playtest evidence.
+- `game-improvement-loop` - runs validated game-improvement cycles through PRD, implementation, and playtest evidence.
 
 ## Matt Pocock Dependencies
 
@@ -39,7 +39,7 @@ The autopilot skills depend on Matt Pocock's current workflow set, including `im
 Install or refresh those dependencies with:
 
 ```bash
-npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill ask-matt --skill improve-codebase-architecture --skill codebase-design --skill domain-modeling --skill grill-me --skill grill-with-docs --skill to-prd --skill to-issues --skill implement --skill code-review --skill triage --skill diagnosing-bugs --skill prototype --skill tdd --skill handoff --skill grilling --skill writing-great-skills --skill resolving-merge-conflicts --full-depth -y
+npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill ask-matt --skill improve-codebase-architecture --skill codebase-design --skill domain-modeling --skill grill-me --skill grill-with-docs --skill to-prd --skill to-issues --skill implement --skill code-review --skill triage --skill diagnosing-bugs --skill prototype --skill tdd --skill handoff --skill grilling --skill writing-great-skills --full-depth -y
 ```
 
 Run `/setup-matt-pocock-skills` once inside your agent for each project you want to use these workflows on.

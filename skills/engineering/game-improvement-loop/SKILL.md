@@ -38,8 +38,8 @@ After validation, continue through all cycles unless blocked or direction become
 1. Frame hypothesis: promise, design bet, observable signs.
 2. Research: code, docs, prior playtests, useful external sources.
 3. Create PRD with `to-prd`: hypothesis, persona, experience, non-goals, acceptance criteria, test/playtest plan.
-4. Implement with `prd-to-prod-autopilot`: make vertical playable slices, run repo checks.
-5. Playtest in the target runtime for requested duration. Prefer clean session, representative viewport/device, and existing automation harness when available.
+4. Implement with `prd-to-prod-autopilot`: make vertical playable slices, run repo checks, and capture the returned PRs, branches, worktrees, blockers, and terminal PR outcomes.
+5. Choose the playtest target from delivery evidence: delivery worktree, preview URL, merged default branch, or blocked awaiting merge. Playtest in the target runtime for requested duration. Prefer clean session, representative viewport/device, and existing automation harness when available.
 6. Record evidence: method, runtime/build/URL, viewport/device, session id, start/end, duration, input count, transcript/log/screenshot paths, state contamination risk, and at least 5 relevant player-facing moments.
 7. Decide verdict: `validated`, `mixed`, `invalidated`, or `incomplete`.
 8. Turn strongest miss into next-cycle seed.
@@ -73,4 +73,4 @@ Worker brief must include direction, cycle number, persona, log path, issue/PRD 
 
 ## Finish
 
-Summarize cycles, PRDs/issues, changed files, checks, playtest evidence, verdicts, blockers, and next best improvement. State plainly if any cycle is incomplete.
+Summarize cycles, PRDs/issues, PRs, worktrees or preview targets, checks, playtest evidence, verdicts, blockers, and next best improvement. State plainly if any cycle is incomplete.
