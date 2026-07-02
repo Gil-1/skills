@@ -7,7 +7,7 @@ description: Guides a focused post-implementation review and fix pass for one co
 
 ## Quick start
 
-Review one implemented issue against the review packet from the parent agent. If you find an in-scope defect, regression, failing check, or unclear failure, load `diagnosing-bugs` and follow that skill instead of inventing a separate fix process. Return concise findings, fixes, changed files, verification evidence, and any blocker.
+Review one implemented issue against the review packet from the parent agent. If you find an in-scope defect, regression, failing check, or unclear failure, load `diagnosing-bugs` and follow that skill instead of inventing a separate fix process. Return concise findings, fixes, changed files, verification evidence, review/fix commit evidence when code changed, and any blocker.
 
 ## Core Rules
 
@@ -17,6 +17,7 @@ Review one implemented issue against the review packet from the parent agent. If
 - State whether you were the original implementer if that matters for review independence.
 - Return a handoff instead of managing shared issue state, tracker labels, or final integration unless explicitly assigned.
 - Fix scoped problems directly when the fix is clearly within the issue's acceptance criteria and safe under repo policy.
+- When the assignment gives you commit ownership for review fixes, commit scoped code changes before handoff and report the commit SHA(s) plus clean worktree status; if you cannot commit, return an uncommitted-fix blocker.
 - Do not expand product scope, weaken tests, remove acceptance criteria, or rewrite unrelated work during the review pass.
 - Report out-of-scope problems, external-action needs, secrets, product decisions, and permission blockers with evidence and the smallest targeted question.
 - Do not claim review success from progress text alone. Require changed files when code changed, verification output, and acceptance criteria status.
@@ -59,7 +60,7 @@ Return:
 
 1. Whether the issue passes review, was fixed during review, or is blocked.
 2. Findings reviewed and fixes made.
-3. Changed files when code changed.
-4. Verification commands and results.
+3. Changed files and review/fix commit SHA(s) when code changed, or an uncommitted-fix blocker if commits were required but could not be made.
+4. Verification commands and results, including clean worktree status when code changed.
 5. Invariant coverage or missing invariant evidence when applicable.
 6. Remaining risks, blockers, accepted assumptions, and any targeted human question.
