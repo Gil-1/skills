@@ -1,6 +1,6 @@
 ---
 name: prd-to-prod-autopilot
-description: Autopilot PRD-to-production delivery from an existing approved PRD: create issues, normalize referenced tracker work, run implementation and review/fix workers, publish implementer-owned PRs, and launch parent-launched Codex PR review sub-agents. Use when the user asks to automate delivery from an existing PRD or continue approved PRD work through issues, implementation, PRs, and Codex review.
+description: "Autopilot PRD-to-production delivery from an existing approved PRD: create issues, normalize referenced tracker work, run implementation and review/fix workers, publish implementer-owned PRs, and launch parent-launched Codex PR review sub-agents. Use when the user asks to automate delivery from an existing PRD or continue approved PRD work through issues, implementation, PRs, and Codex review."
 ---
 
 # PRD To Production Autopilot
