@@ -13,7 +13,7 @@ Require:
 
 - Target repo and delivery worktree path.
 - Base branch, run slug, intended PR branch, and repo PR policy when known.
-- Delivery summary: PRD/issues covered, relevant documents, changed areas, checks run with results, blockers, and assumptions.
+- Delivery summary: PRD/issues covered, relevant documents, changed areas, checks run with results, blockers, assumptions, and whether the review unit is one issue or an explicit integrated PRD delivery branch.
 - Whether the work is complete. Use a ready PR only for complete verified work; use a draft PR for intentionally partial or blocked work.
 
 If no dedicated git worktree exists and code changes already exist in a normal checkout, stop and ask for a worktree-safe handoff plan. Do not copy uncommitted changes into a new worktree by guesswork.
@@ -22,11 +22,12 @@ If no dedicated git worktree exists and code changes already exist in a normal c
 
 1. Verify the worktree with `git rev-parse --show-toplevel`, `git worktree list`, and `git status --short`. Ensure the worktree is on a non-protected feature branch, preferably `codex/<run-slug>` unless repo policy says otherwise.
 2. If the branch/worktree does not exist yet and no implementation changes have started, create it from the current base with `git worktree add -b codex/<run-slug> <sibling-or-repo-policy-path> <base>`. Record the path in the parent run state.
-3. Spawn a publishing sub-agent when sub-agent facilities are available. The parent must not perform the commit, push, or PR creation itself in that case. If no sub-agent facility exists, the parent performs the publishing assignment below directly and records that it used the parent-agent fallback.
-4. Give the sub-agent or parent-agent fallback the assignment listed below.
-5. After publishing completes, verify the PR URL with `gh pr view`, confirm the branch pushed, and check the worktree status.
-6. Load `codex-pr-review` in the PR worktree and follow it until Codex validates, blocks on GitHub, or the review loop times out. Record the review result.
-7. Update the parent run state with PR URL, branch, commit SHAs, checks, review status, PR state, fetch status, and remaining blockers.
+3. Gate the review unit: inspect the delivery summary and diff. If the worktree contains multiple issue slices without an explicit integrated-PRD delivery policy, stop and request a split; do not publish a parent PR that silently includes child or sibling issue work.
+4. Spawn a publishing sub-agent when sub-agent facilities are available. The parent must not perform the commit, push, or PR creation itself in that case. If no sub-agent facility exists, the parent performs the publishing assignment below directly and records that it used the parent-agent fallback.
+5. Give the sub-agent or parent-agent fallback the assignment listed below.
+6. After publishing completes, verify the PR URL with `gh pr view`, confirm the branch pushed, and check the worktree status.
+7. Load `codex-pr-review` in the PR worktree and follow it until Codex validates, blocks on GitHub, times out, or returns a redesign/follow-up recommendation. Record the review result.
+8. Update the parent run state with PR URL, branch, commit SHAs, checks, review status, PR state, fetch status, and remaining blockers.
 
 ## Publishing Assignment
 
@@ -34,6 +35,7 @@ Include:
 
 - Worktree path, base branch, target branch, and remote name.
 - Delivery summary, PRD/issues, relevant documents, acceptance criteria status, and verification evidence.
+- Review-unit policy: one issue/one PR by default, or the explicit integrated-PRD delivery policy.
 - Known blockers/assumptions and whether the PR should be draft.
 - Repo rules for commit messages, PR templates, and protected branches.
 - Clear instruction not to revert unrelated changes or include ambiguous files.
@@ -54,4 +56,5 @@ The sub-agent must:
 - Do not deploy, publish releases, run shared migrations, or perform production side effects.
 - Do not force-push unless repo policy explicitly requires it and the parent approves from evidence.
 - Use `codex-pr-review` for validation status, Codex feedback handling, pushed fixes, and final PR state.
+- Do not expand PR scope after publication by merging child or sibling issue work unless the assignment explicitly changes to an integrated PRD delivery branch.
 - If GitHub auth, remotes, base branch, or PR permissions are missing, stop with the smallest actionable blocker.

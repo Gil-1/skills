@@ -13,6 +13,7 @@ Review one implemented issue against the review packet from the parent agent. If
 
 - Compose `diagnosing-bugs` for fixes. This skill decides when a fix is needed; `diagnosing-bugs` defines how to debug and fix it.
 - Review only the assigned issue. Flag oversized or cross-issue concerns instead of broadening ownership.
+- Do not pass review when the diff includes unrelated child or sibling issue work. Report the needed split or integrated-PR policy instead.
 - State whether you were the original implementer if that matters for review independence.
 - Return a handoff instead of managing shared issue state, tracker labels, or final integration unless explicitly assigned.
 - Fix scoped problems directly when the fix is clearly within the issue's acceptance criteria and safe under repo policy.
@@ -24,7 +25,7 @@ Review one implemented issue against the review packet from the parent agent. If
 
 ### 1. Understand The Assignment
 
-Use the parent-provided review packet. It should include the issue brief, source PRD or design context, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, verification evidence, known assumptions, and risky files or contracts.
+Use the parent-provided review packet. It should include the issue brief, source PRD or design context, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, verification evidence, stated invariants for stateful backend work, known assumptions, and risky files or contracts.
 
 If essential context is missing, inspect the repo and issue artifacts first. Ask the parent only when the review cannot be completed from available evidence.
 
@@ -37,6 +38,8 @@ Check:
 3. The diff is scoped, integrated, and consistent with repo patterns.
 4. Edge cases, data migration paths, public contracts, and error handling were not missed.
 5. Existing tests, lint, build, and smoke checks remain meaningful and were not bypassed.
+6. The worker's stated invariants hold against the diff and evidence.
+7. For stateful backend changes, reruns, stale rows or edited source data, reviewed/discarded lifecycle behavior, and concurrent workers are handled or explicitly out of scope.
 
 ### 3. Diagnose And Fix Findings
 
@@ -47,6 +50,8 @@ When you find a defect or a check fails:
 3. Keep the fix inside the assigned issue scope.
 4. Retest the targeted check and any affected acceptance criteria.
 
+If findings expose the same design flaw across multiple symptoms or Codex rounds, stop fixing individual symptoms and return `requires redesign/split` with evidence.
+
 ### 4. Handoff Results
 
 Return:
@@ -55,4 +60,5 @@ Return:
 2. Findings reviewed and fixes made.
 3. Changed files when code changed.
 4. Verification commands and results.
-5. Remaining risks, blockers, accepted assumptions, and any targeted human question.
+5. Invariant coverage or missing invariant evidence when applicable.
+6. Remaining risks, blockers, accepted assumptions, and any targeted human question.
