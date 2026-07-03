@@ -11,7 +11,7 @@ Run this skill as the conductor for delivery. Start only from an existing PRD or
 
 - The conductor sequences skills, assigns work, checks gates, launches fresh PR-review sub-agents, reconciles merged tracker state when asked, and reports completion.
 - A review unit is the code boundary that must map to one PR: one independent issue, one dependent issue PR, or one declared integrated PRD branch.
-- A terminal PR outcome is ready for human merge, timed out, blocked with evidence, or returned as redesign/split/follow-up with evidence.
+- A terminal PR outcome is ready for human merge, timed out, blocked with evidence, or returned as redesign/split/follow-up with evidence. Only ready for human merge is merge-ready; the other terminal outcomes require a next action in the final ledger.
 - Split pressure exists when a slice combines multiple risky axes, is likely to create one hotspot module or test file, or returns repeated review churn from `review-fix` or `codex-pr-review`.
 - Post-merge reconciliation is tracker and worktree cleanup after the user confirms the PRD PRs are merged and asks for reconciliation or cleanup.
 
@@ -61,7 +61,7 @@ Under independent and dependent topologies, assign each code-changing issue work
 7. Review and fix. Assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Independent review/fix passes may run in parallel after implementations are verified. Give the reviewer/fixer explicit permission to update the issue or PR it reviews when durable status changes. Done when scoped fixes are committed on the assigned branch, or the reviewer/fixer returns a blocker, split, or redesign result with evidence.
 8. Run the pre-publish repo gate. Rerun or confirm repo-level checks, audit PRD/issue coverage, cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, blockers, and stale sub-agent handoffs. Done when the review units are publishable or blocked with evidence.
 9. Publish review units. After `implement` and `review-fix` are complete, including any review/fix commit, the implementing worker owns push and PR creation or update for that review unit. Resume the implementing worker when possible; if unavailable, explicitly assign a same-branch publisher and report that fallback. Done when the worker returns the PR URL or integrated delivery status, branch, commit SHA(s), issue comment status, verification evidence, `code-review` result, `review-fix` result, and publishing blockers if any.
-10. Run PR review. The parent launches a fresh `codex-pr-review` sub-agent for each published PR, passes the PR context, and lets that skill own watcher, feedback, reaction, retry, and final review mechanics. Wait for required PR checks. If checks fail or merge blockers appear, assign a same-branch fixer to diagnose, fix, commit, and push using `diagnosing-bugs` or the repo's merge-conflict process. Done when every PR reaches a terminal PR outcome. Independent PR-review sub-agents may run in parallel.
+10. Run PR review. The parent launches a fresh `codex-pr-review` sub-agent for each published PR, passes the PR context, and lets that skill own watcher, feedback, reaction, retry, and final review mechanics. Wait for required PR checks. If checks fail or merge blockers appear, assign a same-branch fixer to diagnose, fix, commit, and push using `diagnosing-bugs` or the repo's merge-conflict process. If `codex-pr-review` returns a continuation packet for `requires_redesign_or_split`, handle it through Redesign/Split Recovery before treating the review unit as finished. Done when every PR reaches a terminal PR outcome with either merge-ready validation or a recorded next action. Independent PR-review sub-agents may run in parallel.
 11. Run the final delivery gate. Reconfirm relevant repo-level checks after PR-review fix pushes, verify each PR still matches the declared review unit, and verify no issue handoff or PR outcome is stale. Done when every implementable issue and every PR has a completion-gate outcome.
 12. Return the merge and cleanup decision. Report the PRs or single delivery branch and ask the user to confirm when merges are done and whether to run post-merge reconciliation.
 
@@ -71,7 +71,16 @@ Under independent and dependent topologies, assign each code-changing issue work
 - Require a valid Markdown PR body.
 - Use non-closing issue references such as `Refs #xxx`; do not use auto-closing keywords such as `Closes`, `Fixes`, or `Resolves` unless the user has explicitly approved issue closure.
 - The publishing worker must comment on the assigned issue with the PR URL when one exists, branch, verification result, acceptance status, `code-review` and `review-fix` results, and any blocker before returning the handoff.
-- Treat redesign/split/follow-up from `codex-pr-review` as terminal for that PR intent. Report it with evidence and do not launch another Codex review until follow-up code changes are made or the user explicitly overrides the stop.
+- Treat redesign/split/follow-up from `codex-pr-review` as terminal for that Codex review loop. Do not launch another Codex review until follow-up code changes are made or the user explicitly overrides the stop.
+
+## Redesign/Split Recovery
+
+When `codex-pr-review` returns `requires_redesign_or_split`, consume its continuation packet before completing the run:
+
+- For `same_pr_redesign`, assign same-branch redesign work with the packet's clustered evidence, then rerun relevant checks, `review-fix`, publishing status updates, and `codex-pr-review` after code changes.
+- For `split_followup_issues`, route the split through `to-issues` or existing tracker work, update the original issue and PR with the created follow-up issue URLs, and schedule unblocked slices through the normal workflow when they are part of the current PRD scope.
+- For `blocked_question` or `manual_override_needed`, mark the affected issue or PR blocked with the packet evidence and the smallest targeted question.
+- Keep dependent issues queued or blocked until the prerequisite PR is either merge-ready or its recovery path is explicitly outside the current run.
 
 ## Assignment Packets
 
@@ -118,7 +127,7 @@ Do not finish the run until:
 - Relevant full-repo checks have passed or their remaining failures are explained as pre-existing/out of scope with evidence.
 - Cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, and PRD acceptance coverage have been checked.
 - Each PR matches the declared delivery topology: independent issue PR, explicit dependent PR, or integrated PRD branch declared before code-changing work started.
-- Each completed issue with code changes has been committed, pushed, represented in a GitHub PR or the required single delivery PR, and reviewed by a fresh `codex-pr-review` sub-agent to a terminal PR outcome. Pending checks, merge blockers, skipped review, or still-running review do not satisfy this gate.
+- Each completed issue with code changes has been committed, pushed, represented in a GitHub PR or the required single delivery PR, and reviewed by a fresh `codex-pr-review` sub-agent to a terminal PR outcome. A non-merge-ready terminal outcome must include a consumed continuation packet, issue/PR status update, and next action. Pending checks, merge blockers, skipped review, or still-running review do not satisfy this gate.
 - Initial completion output asks for merge, cleanup, and issue-closure confirmation; it does not close issues or delete worktrees.
 
-Final output must summarize the PRD source, worked issues, created PRs, delivery worktrees/branches, verification commands/results, review outcomes, assumptions accepted during delivery, remaining blockers, and the human merge/cleanup/issue-closure decision still needed.
+Final output must summarize the PRD source, worked issues, created PRs, delivery worktrees/branches, verification commands/results, review outcomes, assumptions accepted during delivery, remaining blockers, and the human merge/cleanup/issue-closure decision still needed. Include a review-unit ledger with separate columns for issue URL/state/labels, PR URL/branch/base/head SHA, checks and mergeability, Codex outcome, merge-ready yes/no, next action, and owner; do not conflate issue numbers with PR numbers.
