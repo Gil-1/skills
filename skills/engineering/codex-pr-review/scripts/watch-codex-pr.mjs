@@ -1536,13 +1536,39 @@ async function watch(options) {
     }
   }
 
+  let final = current;
+  let finalSnapshotError;
+  try {
+    final = await readSnapshotRateAware(target, {
+      ...rateAwareOptions,
+      deadlineMs: Date.now() + Math.min(intervalMs, 60 * 1000),
+    });
+  } catch (error) {
+    if (!(error instanceof WatcherTimeoutError)) throw error;
+    finalSnapshotError = error.message;
+  }
+
+  const finalEvent = immediateEvent(final) ?? changeEvent(current, final);
+  if (finalEvent) {
+    printResult({
+      event: finalEvent,
+      target,
+      elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
+      polls,
+      previous: slim(current),
+      current: slim(final),
+    });
+    return;
+  }
+
   printResult({
     event: "timeout",
     target,
     elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
     polls,
     previous: slim(initial),
-    current: slim(current),
+    current: slim(final),
+    finalSnapshotError,
   });
 }
 
