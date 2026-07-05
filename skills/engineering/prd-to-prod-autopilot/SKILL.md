@@ -1,6 +1,6 @@
 ---
 name: prd-to-prod-autopilot
-description: "Autopilot PRD-to-production delivery from an existing approved PRD: create issues, normalize referenced tracker work, run implementation and review/fix workers, publish implementer-owned PRs, and launch parent-launched Codex PR review sub-agents. Use when the user asks to automate delivery from an existing PRD or continue approved PRD work through issues, implementation, PRs, and Codex review."
+description: "Autopilot PRD-to-production delivery from an existing approved PRD: create issues, normalize referenced tracker work, run implementation and review/fix workers, publish post-review PRs, and launch parent-launched Codex PR review sub-agents. Use when the user asks to automate delivery from an existing PRD or continue approved PRD work through issues, implementation, PRs, and Codex review."
 ---
 
 # PRD To Production Autopilot
@@ -29,7 +29,7 @@ If a referenced skill explains how to do a task, load that skill and follow it i
 - `diagnosing-bugs` owns failed-check debugging.
 - `review-fix` owns the post-implementation review/fix pass for one issue, including committing scoped fixes when it changes files.
 - `codex-pr-review` owns the post-push Codex PR review loop once a PR exists.
-- `worktree-pr-review` owns standalone or recovery publishing for completed worktrees. This skill does not use it for normal PRD delivery; implementing workers publish their own review units so each PR stays tied to the issue delivered.
+- `worktree-pr-review` owns standalone or recovery publishing for completed worktrees. This skill does not use it for normal PRD delivery; post-review publishing happens in the declared review-unit worktree so each PR stays tied to the issue delivered.
 - The conductor owns orchestration and final gates. It should not implement, review/fix, or publish issue work itself when a suitable sub-agent can do that work.
 
 ## Autonomy And Blockers
@@ -62,7 +62,7 @@ Under independent and dependent topologies, assign each code-changing issue work
 6. Verify implementations. Require concrete acceptance evidence, command evidence, implementation commit SHA(s), and a `code-review` result with no unresolved blocking Standards or Spec findings before marking an issue verified. When a check fails, load `diagnosing-bugs` in the worker or parent context and follow it. Done when each implementation is verified or blocked with failing evidence.
 7. Review and fix. Assign each verified implementation to a fresh reviewer/fixer sub-agent using `review-fix`. Independent review/fix passes may run in parallel after implementations are verified. Give the reviewer/fixer explicit permission to update the issue or PR it reviews when durable status changes. Done when scoped fixes are committed on the assigned branch, or the reviewer/fixer returns a blocker, split, or redesign result with evidence.
 8. Run the pre-publish repo gate. Rerun or confirm repo-level checks, audit PRD/issue coverage, cross-issue conflicts, duplicated abstractions, missing docs, migration gaps, blockers, and stale sub-agent handoffs. Done when the review units are publishable or blocked with evidence.
-9. Publish review units. After `implement` and `review-fix` are complete, including any review/fix commit, the implementing worker owns push and PR creation or update for that review unit. Resume the implementing worker when possible; if unavailable, explicitly assign a same-branch publisher and report that fallback. Done when the worker returns the PR URL or integrated delivery status, branch, commit SHA(s), issue comment status, verification evidence, `code-review` result, `review-fix` result, and publishing blockers if any.
+9. Publish review units. After `implement` and `review-fix` are complete, including any review/fix commit, assign a post-review publisher for that review unit. Implementation workers do not own push or PR creation; they commit locally and hand off evidence. Done when the publisher returns the PR URL or integrated delivery status, branch, commit SHA(s), issue comment status, verification evidence, `code-review` result, `review-fix` result, and publishing blockers if any.
 10. Run PR review. The parent launches a fresh `codex-pr-review` sub-agent for each published PR, passes the PR context, and lets that skill own watcher, feedback, reaction, retry, and final review mechanics. Wait for required PR checks. If checks fail or merge blockers appear, assign a same-branch fixer to diagnose, fix, commit, and push using `diagnosing-bugs` or the repo's merge-conflict process. If `codex-pr-review` returns a continuation packet for `requires_redesign_or_split`, handle it through Redesign/Split Recovery before treating the review unit as finished. Done when every PR reaches a terminal PR outcome with either merge-ready validation or a recorded next action. Independent PR-review sub-agents may run in parallel.
 11. Run the final delivery gate. Reconfirm relevant repo-level checks after PR-review fix pushes, verify each PR still matches the declared review unit, and verify no issue handoff or PR outcome is stale. Done when every implementable issue and every PR has a completion-gate outcome.
 12. Return the merge and cleanup decision. Report the PRs or single delivery branch and ask the user to confirm when merges are done and whether to run post-merge reconciliation.
@@ -70,6 +70,7 @@ Under independent and dependent topologies, assign each code-changing issue work
 ## Publishing Rules
 
 - Before requesting review, verify the branch still matches its declared review unit. Undeclared sibling issue work is a split/blocker result, not a retroactive integrated-delivery conversion.
+- Do not grant implementation workers push or PR-creation permission. Only a post-review publisher may push/open the PR, and only after `review-fix` and the pre-publish repo gate are complete.
 - Require a valid Markdown PR body.
 - Use non-closing issue references such as `Refs #xxx`; do not use auto-closing keywords such as `Closes`, `Fixes`, or `Resolves` unless the user has explicitly approved issue closure.
 - The publishing worker must comment on the assigned issue with the PR URL when one exists, branch, verification result, acceptance status, `code-review` and `review-fix` results, and any blocker before returning the handoff.
@@ -86,7 +87,7 @@ When `codex-pr-review` returns `requires_redesign_or_split`, consume its continu
 
 ## Assignment Packets
 
-Each worker, reviewer/fixer, or PR-review fixer owns status updates for the issue or PR it is assigned. Durable updates include implementation started, PR opened or updated, verification blocked, review passed or failed, acceptance criteria status, and terminal PR outcome. The conductor coordinates sequencing, parallelism, integration, and final gates, but does not maintain a parallel issue-state log or take over delegated work just because it can.
+Each worker, reviewer/fixer, post-review publisher, or PR-review fixer owns status updates for the issue or PR it is assigned. Durable updates include implementation started, PR opened or updated, verification blocked, review passed or failed, acceptance criteria status, and terminal PR outcome. The conductor coordinates sequencing, parallelism, integration, and final gates, but does not maintain a parallel issue-state log or take over delegated work just because it can.
 
 Each worker assignment must include only orchestration context not already owned by the issue or agent brief:
 
@@ -96,17 +97,19 @@ Each worker assignment must include only orchestration context not already owned
 - Additional verification commands not already captured in the issue.
 - Delivery topology, review unit, base or dependency assumptions, `code-review` fixed point, and external-action limits.
 - Assigned worktree path and branch.
-- Instruction to load `implement` for the assigned issue and follow its implementation, `code-review`, and commit workflow.
+- Instruction to load `implement` for the assigned issue and follow its implementation, `code-review`, and commit-only workflow; do not push or open a PR.
 - Explicit file or responsibility ownership when needed to avoid parallel conflicts.
 - Explicit exclusions for adjacent admin/API/eval or sibling-issue surfaces when they are not in the assigned issue.
 - For stateful backend work, a required pre-edit invariant list covering applicable idempotency, stale data, lifecycle states, source traceability, concurrency, provider/config versioning, rollback, and reprocessing behavior.
 - For language extraction, matching, ranking, or evaluator work, a required table-driven positive/negative example matrix.
 - For hook, event, or adapter work, a required contract matrix covering payload shape, timing/order, idempotency/retries, error handling, and lifecycle cleanup.
 - Reminder that other agents may be editing nearby work, so the worker must not revert unrelated changes.
-- Required handoff: status, changed files, implementation commit SHA(s), review/fix commit SHA(s) when fixes were committed, checks run with results, `code-review` result, acceptance criteria status, invariant or matrix coverage when applicable, assumptions, blockers, integration notes, and publishing details when code was pushed.
+- Required handoff: status, changed files, implementation commit SHA(s), review/fix commit SHA(s) when fixes were committed, checks run with results, `code-review` result, acceptance criteria status, invariant or matrix coverage when applicable, assumptions, blockers, integration notes, and publishing readiness. Only post-review publishers or PR-review fixers include publishing details when code was pushed.
 - Confirmation that the assigned issue or PR was updated with durable status, or the exact reason it could not be updated.
 
 Each reviewer/fixer assignment must provide the review packet expected by `review-fix`, explicitly assign commit ownership for scoped review fixes, and prefer a reviewer who did not implement the issue.
+
+Each post-review publisher assignment must include the completed implementation and `review-fix` handoffs, the branch/worktree, and explicit permission to push/open the PR.
 
 Each `codex-pr-review` assignment must include PR URL, branch, worktree, declared review unit, linked PRD/issues/docs, prior `code-review` and `review-fix` outcomes, check status, push policy, and any known blockers. Do not pass stale Codex feedback; `codex-pr-review` owns fresh watcher output.
 
