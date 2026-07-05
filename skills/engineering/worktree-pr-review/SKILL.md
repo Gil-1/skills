@@ -5,7 +5,7 @@ description: Finish standalone or recovery work from a dedicated git worktree by
 
 # Worktree PR Review
 
-Finish reviewable work that already exists in a dedicated git worktree. This skill owns standalone or recovery publishing plus the Codex review loop; it does not decide product scope, implement new issues, or replace the normal `prd-to-prod-autopilot` rule that implementing workers publish their own review units.
+Finish reviewable work that already exists in a dedicated git worktree. This skill owns standalone or recovery publishing plus the Codex review loop; it does not decide product scope, implement new issues, or replace the normal `prd-to-prod-autopilot` post-review publishing gate.
 
 ## Inputs
 
