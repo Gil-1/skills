@@ -109,7 +109,7 @@ Each worker assignment must include only orchestration context not already owned
 
 Each reviewer/fixer assignment must provide the review packet expected by `review-fix`, explicitly assign commit ownership for scoped review fixes, and prefer a reviewer who did not implement the issue.
 
-Each post-review publisher assignment must include the completed implementation and `review-fix` handoffs, declared review unit/topology, base strategy, branch/worktree, any existing PR URL for recovery/update cases, and explicit permission to push and create or update the PR.
+Each post-review publisher assignment must include the completed implementation and `review-fix` handoffs, declared review unit/topology, base strategy, concrete target base branch, remote name, target branch/worktree, any existing PR URL for recovery/update cases, and explicit permission to push and create or update the PR.
 
 Each `codex-pr-review` assignment must include PR URL, branch, worktree, declared review unit, linked PRD/issues/docs, prior `code-review` and `review-fix` outcomes, check status, push policy, and any known blockers. Do not pass stale Codex feedback; `codex-pr-review` owns fresh watcher output.
 
