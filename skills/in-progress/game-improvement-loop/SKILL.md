@@ -37,7 +37,7 @@ After validation, continue through all cycles unless blocked or direction become
 
 1. Frame hypothesis: promise, design bet, observable signs.
 2. Research: code, docs, prior playtests, useful external sources.
-3. Create PRD with `to-prd`: hypothesis, persona, experience, non-goals, acceptance criteria, test/playtest plan.
+3. Create spec with `to-spec`: hypothesis, persona, experience, non-goals, acceptance criteria, test/playtest plan.
 4. Implement with `prd-to-prod-autopilot`: make vertical playable slices, run repo checks, and capture the returned PRs, branches, worktrees, blockers, and terminal PR outcomes.
 5. Choose the playtest target from delivery evidence: delivery worktree, preview URL, merged default branch, or blocked awaiting merge. Playtest in the target runtime for requested duration. Prefer clean session, representative viewport/device, and existing automation harness when available.
 6. Record evidence: method, runtime/build/URL, viewport/device, session id, start/end, duration, input count, transcript/log/screenshot paths, state contamination risk, and at least 5 relevant player-facing moments.
