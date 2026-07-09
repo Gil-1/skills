@@ -23,7 +23,7 @@ This installs:
 
 - `handle-tickets` - orchestrates existing implementation-ready tickets through implementation, fresh code review, scoped fixes, PR publication, and Codex PR review.
 - `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
-- `review-fix` - guides a per-ticket reviewer/fixer pass that uses `diagnosing-bugs` for defects before final validation.
+- `review-fix` - reviews code changes, fixes actionable findings, and verifies the result.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, investigates repeated feedback patterns, pushes fixes, and loops until Codex validates the PR.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.

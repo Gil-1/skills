@@ -1,66 +1,35 @@
 ---
 name: review-fix
-description: Guides a focused post-implementation review and fix pass for one completed ticket or review unit. Use when Codex or a sub-agent is assigned one implemented ticket/review unit to inspect against its brief, report review findings, and fix in-scope defects by loading the diagnosing-bugs skill.
+description: Reviews code changes and fixes actionable findings. Use when the user asks to review and repair a branch, pull request, commit range, or completed implementation.
 ---
 
 # Review Fix
 
-## Quick start
+Run a review → fix → verify loop. Preserve review independence and stay within the requested change.
 
-Review one implemented ticket or review unit against the review packet from the parent agent. If you find an in-scope defect, regression, failing check, or unclear failure, load `diagnosing-bugs` and follow that skill instead of inventing a separate fix process. Return concise findings, fixes, changed files, verification evidence, review/fix commit evidence when code changed, and any blocker.
+## 1. Review
 
-## Core Rules
+1. Establish the review target, fixed point, source issue or spec when one exists, and relevant repo instructions.
+2. Load `code-review` and follow it. Let its fresh Standards and Spec reviewers report before editing.
+3. Classify every finding as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Treat judgment-call smells as actionable only when the evidence supports changing them.
 
-- Compose `diagnosing-bugs` for fixes. This skill decides when a fix is needed; `diagnosing-bugs` defines how to debug and fix it.
-- Review only the assigned ticket or review unit. Flag oversized or cross-ticket concerns instead of broadening ownership.
-- Require the diff to match the declared review unit. If it contains undeclared child or sibling ticket work, return a scope/blocker result instead of passing review.
-- State whether you were the original implementer if that matters for review independence.
-- Return a handoff instead of managing shared ticket state, tracker labels, or final integration unless explicitly assigned.
-- Fix scoped problems directly when the fix is clearly within the ticket's acceptance criteria and safe under repo policy.
-- When the assignment gives you commit ownership for review fixes, commit scoped code changes before handoff and report the commit SHA(s) plus clean worktree status; if you cannot commit, return an uncommitted-fix blocker.
-- Do not expand product scope, weaken tests, remove acceptance criteria, or rewrite unrelated work during the review pass.
-- Report out-of-scope problems, external-action needs, secrets, product decisions, and permission blockers with evidence and the smallest targeted question.
-- Do not claim review success from progress text alone. Require changed files when code changed, verification output, and acceptance criteria status.
+Continue when every finding has a disposition.
 
-## Workflow
+## 2. Fix
 
-### 1. Understand The Assignment
+Fix each actionable finding within the reviewed scope:
 
-Use the parent-provided review packet. It should include the ticket brief, declared review unit, source PRD or design context, acceptance criteria, worker handoff, changed files, relevant diff, verification commands, verification evidence, stated invariants or matrices when applicable, known assumptions, and risky files or contracts.
+- For behavior that can be covered at an agreed test seam, load `tdd` and use a red → green cycle.
+- Apply clear documentation, configuration, naming, and refactoring fixes directly.
+- Load `diagnosing-bugs` when the cause is unclear, the failure is difficult to reproduce, flaky, or performance-related, or a first fix fails.
 
-If essential context is missing, inspect the repo and ticket artifacts first. Ask the parent only when the review cannot be completed from available evidence.
+Run the smallest relevant check after each fix. Continue when every actionable finding is verified or blocked with evidence.
 
-### 2. Review The Work
+## 3. Verify
 
-Check:
+1. Run the review target's relevant checks.
+2. Inspect the final diff against the findings. Rerun `code-review` when fixes materially changed the design or scope.
+3. Commit only when assigned commit ownership.
+4. Return `passed`, `fixed`, or `blocked`, with finding dispositions, changed files, checks, commits when applicable, and remaining blockers.
 
-1. The implementation satisfies the ticket and source PRD/design intent.
-2. Acceptance criteria are covered by behavior, tests, docs, or explicit evidence.
-3. The diff matches the declared review unit, is integrated, and is consistent with repo patterns.
-4. Edge cases, data migration paths, public contracts, and error handling were not missed.
-5. Existing tests, lint, build, and smoke checks remain meaningful and were not bypassed.
-6. The worker's stated invariants hold against the diff and evidence.
-7. Required matrices are present and evidenced for language/evaluator or hook/event/adapter work.
-8. For stateful backend changes, reruns, stale rows or edited source data, reviewed/discarded lifecycle behavior, and concurrent workers are handled or explicitly out of scope.
-
-### 3. Diagnose And Fix Findings
-
-When you find a defect or a check fails:
-
-1. Load `diagnosing-bugs`.
-2. Follow `diagnosing-bugs` for the debug/fix loop.
-3. Keep the fix inside the assigned ticket/review-unit scope.
-4. Retest the targeted check and any affected acceptance criteria.
-
-If findings expose the same design flaw across multiple symptoms or Codex rounds, stop fixing individual symptoms and return a root-cause blocker with evidence, the smallest targeted question, and whether the coherent fix still belongs in the assigned ticket/review unit.
-
-### 4. Handoff Results
-
-Return:
-
-1. Whether the ticket/review unit passes review, was fixed during review, or is blocked.
-2. Findings reviewed and fixes made.
-3. Changed files and review/fix commit SHA(s) when code changed, or an uncommitted-fix blocker if commits were required but could not be made.
-4. Verification commands and results, including clean worktree status when code changed.
-5. Invariant coverage or missing invariant evidence when applicable.
-6. Remaining risks, blockers, accepted assumptions, and any targeted human question.
+Finish only when every finding is accounted for and every fix has verification evidence.
