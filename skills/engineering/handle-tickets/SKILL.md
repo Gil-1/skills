@@ -23,7 +23,7 @@ If a referenced skill owns task mechanics, load that skill and follow it. The on
 2. Build the queue. Classify readiness, dependencies, likely conflicts, and parallelization opportunities. Done when every implementable ticket maps to one conductor, worktree, branch, and PR plan.
 3. Schedule conductors. Fan out independent tickets in parallel and queue dependent or conflicting tickets behind explicit prerequisites. Done when every ticket is running, queued with a reason, excluded, or blocked.
 4. Reconcile handoffs. Verify each conductor returned ticket status, branch/worktree, commits, checks, `code-review` report, fix result when needed, PR URL, Codex outcome, assumptions, and blockers. Done when every ticket has a terminal outcome and next action.
-5. Return the merge decision. Report the PRs, branches, checks, review outcomes, blockers, and any human action needed. Run cleanup only after the user confirms the PRs are merged and asks for cleanup or issue reconciliation.
+5. Return the merge decision. Report the PRs, branches, checks, review outcomes, blockers, and any human action needed. Run cleanup only after the user confirms the PRs are merged and asks for cleanup or ticket reconciliation.
 
 ## Ticket Conductor Loop
 

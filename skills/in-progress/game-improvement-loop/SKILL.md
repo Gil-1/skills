@@ -19,7 +19,7 @@ Do not shorten a requested/default playtest unless user approves. If full playte
 
 Before PRD or code:
 
-1. Read local rules, docs, prior playtests, issues/PRDs, and code paths relevant to the player-facing behavior.
+1. Read local rules, docs, prior playtests, tickets/PRDs, and code paths relevant to the player-facing behavior.
 2. Research external references only when they help the requested goal.
 3. Return concise direction brief:
    - player promise
@@ -38,7 +38,7 @@ After validation, continue through all cycles unless blocked or direction become
 1. Frame hypothesis: promise, design bet, observable signs.
 2. Research: code, docs, prior playtests, useful external sources.
 3. Create spec with `to-spec`: hypothesis, persona, experience, non-goals, acceptance criteria, test/playtest plan.
-4. Implement with `prd-to-prod-autopilot`: make vertical playable slices, run repo checks, and capture the returned PRs, branches, worktrees, blockers, and terminal PR outcomes.
+4. Implement the cycle. If the spec already points to implementation-ready tickets, use `handle-tickets` and capture its PRs, branches, checks, blockers, and Codex outcomes. Otherwise use focused ticket-sized work with `implement`, then run `review-fix` and `codex-pr-review` when a PR exists. Keep slices vertical and playable.
 5. Choose the playtest target from delivery evidence: delivery worktree, preview URL, merged default branch, or blocked awaiting merge. Playtest in the target runtime for requested duration. Prefer clean session, representative viewport/device, and existing automation harness when available.
 6. Record evidence: method, runtime/build/URL, viewport/device, session id, start/end, duration, input count, transcript/log/screenshot paths, state contamination risk, and at least 5 relevant player-facing moments.
 7. Decide verdict: `validated`, `mixed`, `invalidated`, or `incomplete`.
@@ -50,7 +50,7 @@ Use sub-agents when they materially help and the work can be split cleanly. Run 
 
 Parallelize independent work inside a cycle: codebase research, design references, test/tooling inspection, asset review, or bounded implementation with non-overlapping files.
 
-Worker brief must include direction, cycle number, persona, log path, issue/PRD expectations, likely modules, verification commands, playtest duration, dirty-worktree warning, and required handoff.
+Worker brief must include direction, cycle number, persona, log path, ticket/PRD expectations, likely modules, verification commands, playtest duration, dirty-worktree warning, and required handoff.
 
 ## Cycle Log
 
@@ -73,4 +73,4 @@ Worker brief must include direction, cycle number, persona, log path, issue/PRD 
 
 ## Finish
 
-Summarize cycles, PRDs/issues, PRs, worktrees or preview targets, checks, playtest evidence, verdicts, blockers, and next best improvement. State plainly if any cycle is incomplete.
+Summarize cycles, PRDs/tickets, PRs, worktrees or preview targets, checks, playtest evidence, verdicts, blockers, and next best improvement. State plainly if any cycle is incomplete.

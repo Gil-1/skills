@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handle Tickets"
+  short_description: "Deliver ready tickets through review, PRs, and Codex"
+  default_prompt: "Use $handle-tickets to deliver existing implementation-ready tracker tickets through implementation, fresh code review, scoped fixes, PR publication, and Codex PR review."
