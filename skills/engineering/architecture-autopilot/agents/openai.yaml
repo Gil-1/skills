@@ -1,4 +1,0 @@
-interface:
-  display_name: "Architecture Autopilot"
-  short_description: "Run architecture-to-delivery autopilot"
-  default_prompt: "Use $architecture-autopilot to run an autonomous architecture-to-delivery pass for this repo."

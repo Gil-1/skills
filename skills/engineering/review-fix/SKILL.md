@@ -52,7 +52,7 @@ When you find a defect or a check fails:
 3. Keep the fix inside the assigned issue scope.
 4. Retest the targeted check and any affected acceptance criteria.
 
-If findings expose the same design flaw across multiple symptoms or Codex rounds, stop fixing individual symptoms and return `requires redesign/split` with evidence.
+If findings expose the same design flaw across multiple symptoms or Codex rounds, stop fixing individual symptoms and return a root-cause blocker with evidence, the smallest targeted question, and whether the coherent fix still belongs in the assigned issue.
 
 ### 4. Handoff Results
 
