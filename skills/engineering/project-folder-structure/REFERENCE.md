@@ -59,7 +59,7 @@ Use this order of reasoning:
 
 1. **Respect constraints.** Preserve required paths and stable contracts. Improve structure inside extension points.
 2. **Follow the change.** If a normal change touches many folders, the current axis may be wrong.
-3. **Name the concept.** Prefer names from docs, issues, UI copy, operations, and domain language.
+3. **Name the concept.** Prefer names from docs, tickets, UI copy, operations, and domain language.
 4. **Separate lifecycles.** Keep source away from generated output, runtime state, large data, caches, and temporary work.
 5. **Expose consumers.** Public APIs, examples, operator tools, and internal modules deserve clear boundaries.
 6. **Use layers sparingly.** Technical layers are fine when required, but they should not hide the concepts users maintain.
@@ -98,7 +98,7 @@ Read documentation before proposing a structure. Folder moves often encode archi
 Use this order:
 
 1. Agent and project rules: `AGENTS.md`, `CLAUDE.md`, `README.md`, `CONTRIBUTING.md`.
-2. Domain language: `CONTEXT.md`, product docs, workflow docs, issue/PRD docs, glossary files.
+2. Domain language: `CONTEXT.md`, product docs, workflow docs, ticket/PRD docs, glossary files.
 3. Architecture decisions: `docs/architecture*`, `docs/adr/`, `ADR.md`, design notes.
 4. Manifests and config: package/workspace files, build/tool config, framework config, CI, deploy config.
 5. Tests and examples: test layout, examples, fixtures, seed data, smoke tests, golden files.
@@ -162,5 +162,5 @@ Treat these as audit signals, not automatic reasons to move:
 6. Generated output, datasets, notebooks, reports, or logs live in source paths without a documented reason.
 7. Local scripts duplicate framework or package-manager behavior without a project-specific reason.
 8. `archive`, `legacy`, `deprecated`, `tmp`, or `experiments` exist without dates, owners, or cleanup expectations.
-9. External repos, forks, client projects, and issue reproductions are mixed into one working directory with active source.
+9. External repos, forks, client projects, and bug reproductions are mixed into one working directory with active source.
 10. Security-sensitive names appear near reports, examples, fixtures, or committed artifacts.

@@ -24,7 +24,7 @@ Fixer sub-agent:
 ## Review Discipline
 
 - Treat Codex feedback as advisory. Verify every finding by reading the real code path, adjacent files, and dependency docs/source/types when the finding depends on external behavior.
-- Before handing off or patching feedback, freeze a scope baseline: PR intent, target branch/base, current `headRefOid`, owner boundary, declared review unit/topology, linked docs/issues, changed files, and non-test LOC.
+- Before handing off or patching feedback, freeze a scope baseline: PR intent, target branch/base, current `headRefOid`, owner boundary, declared review unit/topology, linked docs/tickets, changed files, and non-test LOC.
 - Classify each current-head finding before work: `in-scope blocker` if it was introduced by the current diff, affects the same owner boundary, and can be fixed without changing the task contract; `follow-up` if it belongs to an adjacent bug class, sibling surface, cleanup, or broader hardening track; `blocked` if it requires a new protocol/config/storage/public API contract, different owner boundary, release-process change, or product decision.
 - Reject unrealistic edge cases, speculative risks, broad rewrites, and fixes that over-complicate the codebase. Prefer small fixes at the right ownership boundary; no refactor unless it clearly improves the bug class.
 - When an accepted finding shows a bug class or repeated pattern, inspect the current PR scope for sibling instances and fix the scoped bug class at once when practical; stop at touched surfaces, owner boundaries, and clear follow-up territory.
@@ -52,7 +52,7 @@ Fixer sub-agent:
 
 ## Continuation Packet
 
-For any terminal outcome that is not current-head Codex validation, include a continuation packet in the final response. Set `merge_ready: false` and include PR URL, branch, base, reviewed head SHA, linked issue or PRD URLs, current PR state, checks and mergeability, Codex disposition, clustered file/theme/comment evidence, P0/P1 dispositions, root-cause investigation notes when relevant, commits pushed, and the next action plus owner.
+For any terminal outcome that is not current-head Codex validation, include a continuation packet in the final response. Set `merge_ready: false` and include PR URL, branch, base, reviewed head SHA, linked ticket or PRD URLs, current PR state, checks and mergeability, Codex disposition, clustered file/theme/comment evidence, P0/P1 dispositions, root-cause investigation notes when relevant, commits pushed, and the next action plus owner.
 
 For `blocked`, choose the smallest next action: answer a product/scope question, authorize a contract change, move work to the correct owner boundary, fix a GitHub/checks/merge blocker, or wait for Codex/GitHub availability. If the work remains in scope, continue on the same PR instead of deferring it.
 
