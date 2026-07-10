@@ -51,7 +51,8 @@ Fixer sub-agent:
 ## Repeated Patterns
 
 - Detect a repeated pattern when two or more Codex rounds for the same PR intent cluster on the same file, theme, subsystem, invariant, or source-code decision. This is not terminal.
-- When a pattern repeats, stop the comment-by-comment loop for that cluster and create a root-cause packet: related Codex comments across heads, accepted/rejected dispositions, current code paths, linked ticket/PRD intent, tests already added, and the suspected invariant that keeps failing.
+- Also run the root-cause investigation after every third completed feedback round for the same PR intent, even when comments do not cluster. Count one round when a watcher-fresh feedback batch has final dispositions; do not count status-only polls or stale/duplicate feedback.
+- When either trigger fires, stop the comment-by-comment loop and create a root-cause packet: relevant Codex comments across heads, accepted/rejected dispositions, current code paths, linked ticket/PRD intent, tests already added, and the suspected invariant that keeps failing.
 - Investigate whether the comments are symptoms of one wrong direction. Prefer a coherent same-PR fix when the root cause remains inside the current ticket/PRD contract and owner boundary.
 - During root-cause investigation, read the surrounding implementation and tests deeply enough to prove the intended behavior. Add or update focused tests for the invariant before requesting another Codex review when practical.
 - If the coherent fix is outside the PR contract, crosses owner boundaries, requires a product decision, or needs a new public/protocol/storage contract, stop as `blocked` with the smallest targeted question and evidence. Do not rename that outcome as redesign or split.
@@ -75,7 +76,7 @@ Fixer sub-agent:
 6. If no PR-body status exists, run the watcher with `--timeout 300` as the silent-start check, re-inspect the PR, and handle any current-head feedback before deciding whether to request Codex.
 7. If that 5-minute silent-start check finds no PR-body status and no current-head top-level PR comment, review, inline comment, or review thread from Codex, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
 8. For fresh feedback, prefer one fixer sub-agent. Use multiple fixers only for isolated worktrees or clearly non-overlapping fixes with an explicit push order. The orchestrator delegates fixes; the parent fixes only when no fixer can be spawned.
-9. After the fixer pushes fixes or reports no code change was needed, classify the round against the scope baseline and update round history. If feedback repeats on the same file, theme, subsystem, or invariant, run Repeated Patterns before another narrow fixer pass or review request. If the root-cause fix is pushed, restart from the current PR head so Codex can validate it.
+9. After the fixer pushes fixes or reports no code change was needed, classify the round against the scope baseline and update round history. Run Repeated Patterns before another narrow fixer pass or review request if feedback repeats on the same file, theme, subsystem, or invariant, or after every third completed feedback round. If the root-cause fix is pushed, restart from the current PR head so Codex can validate it.
 10. Stop only when Codex validates, times out, blocks on GitHub, or a real blocker remains after root-cause investigation.
 
 ## Guardrails
