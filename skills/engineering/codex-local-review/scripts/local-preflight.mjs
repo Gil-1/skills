@@ -79,8 +79,23 @@ function runProcess(command, args, options = {}) {
   });
 }
 
-async function git(worktree, args) {
-  return runProcess("git", ["-C", worktree, ...args]);
+async function sanitizedProcessEnvironment() {
+  const result = await runProcess("git", ["rev-parse", "--local-env-vars"]);
+  if (result.exitCode !== 0) {
+    throw new Error(`Could not identify Git-local environment variables: ${commandFailure(result)}`);
+  }
+  const names = result.stdout.split(/\r?\n/).filter(Boolean);
+  if (names.length === 0 || names.some((name) => !/^GIT_[A-Z0-9_]+$/.test(name))) {
+    throw new Error("Git returned an invalid local environment variable list.");
+  }
+
+  const env = { ...process.env };
+  for (const name of names) delete env[name];
+  return env;
+}
+
+async function git(worktree, args, env) {
+  return runProcess("git", ["-C", worktree, ...args], { env });
 }
 
 function commandFailure(result) {
@@ -131,23 +146,26 @@ function block(outcome, code, message, evidence = {}) {
   return outcome;
 }
 
-async function captureState(worktree) {
-  const headResult = await git(worktree, ["rev-parse", "HEAD"]);
+async function captureState(worktree, env) {
+  const headResult = await git(worktree, ["rev-parse", "HEAD"], env);
   if (headResult.exitCode !== 0) throw new Error(`Could not read HEAD: ${commandFailure(headResult)}`);
-  const statusResult = await git(worktree, ["status", "--porcelain=v1", "--untracked-files=all", "--ignored"]);
+  const statusResult = await git(worktree, [
+    "-c", "core.fileMode=true",
+    "status", "--porcelain=v1", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
+  ], env);
   if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
   const completeStatus = statusResult.stdout;
   const status = completeStatus
     .split(/(?<=\n)/)
     .filter((line) => !line.startsWith("!! "))
     .join("");
-  const indexResult = await git(worktree, ["ls-files", "-v", "-z"]);
+  const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env);
   if (indexResult.exitCode !== 0) throw new Error(`Could not inspect index flags: ${commandFailure(indexResult)}`);
   const hiddenIndexEntries = indexResult.stdout
     .split("\0")
     .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith("S ")))
     .sort();
-  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env);
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
   const ignoredFiles = [];
   for (const relativePath of ignoredResult.stdout.split("\0").filter(Boolean).sort()) {
@@ -245,7 +263,16 @@ async function runPreflight(options) {
     });
   }
 
-  const topLevelResult = await git(outcome.worktree, ["rev-parse", "--show-toplevel"]);
+  let processEnv;
+  try {
+    processEnv = await sanitizedProcessEnvironment();
+  } catch (error) {
+    return block(outcome, "environment_failed", "Could not sanitize the subprocess environment.", {
+      error: error.message,
+    });
+  }
+
+  const topLevelResult = await git(outcome.worktree, ["rev-parse", "--show-toplevel"], processEnv);
   if (topLevelResult.exitCode !== 0) {
     return block(outcome, "invalid_target", "The worktree is not a Git repository.", {
       error: commandFailure(topLevelResult),
@@ -256,7 +283,7 @@ async function runPreflight(options) {
     return block(outcome, "invalid_target", "The worktree must be the repository top level.", { topLevel });
   }
 
-  const versionResult = await runProcess("codex", ["--version"]);
+  const versionResult = await runProcess("codex", ["--version"], { env: processEnv });
   if (versionResult.error?.code === "ENOENT") {
     return block(outcome, "codex_missing", "Codex CLI was not found on PATH.", versionResult.error);
   }
@@ -270,7 +297,7 @@ async function runPreflight(options) {
 
   let before;
   try {
-    before = await captureState(outcome.worktree);
+    before = await captureState(outcome.worktree, processEnv);
   } catch (error) {
     return block(outcome, "invalid_target", "Could not inspect the candidate repository.", { error: error.message });
   }
@@ -296,7 +323,7 @@ async function runPreflight(options) {
 
   const baseResult = await git(outcome.worktree, [
     "rev-parse", "--verify", "--quiet", "--end-of-options", `${outcome.base.reference}^{commit}`,
-  ]);
+  ], processEnv);
   if (baseResult.exitCode !== 0) {
     return block(outcome, "invalid_base", "The base reference does not resolve to a commit.", {
       base: outcome.base.reference,
@@ -305,7 +332,7 @@ async function runPreflight(options) {
   }
   outcome.base.resolvedHead = baseResult.stdout.trim();
 
-  const mergeBaseResult = await git(outcome.worktree, ["merge-base", outcome.base.resolvedHead, before.head]);
+  const mergeBaseResult = await git(outcome.worktree, ["merge-base", outcome.base.resolvedHead, before.head], processEnv);
   if (mergeBaseResult.exitCode !== 0 || !mergeBaseResult.stdout.trim()) {
     return block(outcome, "invalid_base", "The base and expected HEAD do not have a merge base.", {
       error: commandFailure(mergeBaseResult),
@@ -313,7 +340,7 @@ async function runPreflight(options) {
   }
   outcome.mergeBase = mergeBaseResult.stdout.trim();
 
-  const diffResult = await git(outcome.worktree, ["diff", "--quiet", `${outcome.mergeBase}...${before.head}`, "--"]);
+  const diffResult = await git(outcome.worktree, ["diff", "--quiet", `${outcome.mergeBase}...${before.head}`, "--"], processEnv);
   if (diffResult.exitCode === 0) {
     return block(outcome, "empty_diff", "The merge diff is empty.", {
       mergeBase: outcome.mergeBase,
@@ -342,12 +369,12 @@ async function runPreflight(options) {
   outcome.command.attempted = true;
   outcome.command.args = args;
   outcome.reviewedHead = before.head;
-  const result = await runProcess("codex", args);
+  const result = await runProcess("codex", args, { env: processEnv });
   Object.assign(outcome.command, result);
 
   let after;
   try {
-    after = await captureState(outcome.worktree);
+    after = await captureState(outcome.worktree, processEnv);
     outcome.readOnly.after = after;
     outcome.readOnly.headUnchanged = before.head === after.head;
     outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;

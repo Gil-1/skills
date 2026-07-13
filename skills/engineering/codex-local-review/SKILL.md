@@ -21,7 +21,7 @@ Run exactly one local Codex review pass through the bundled deterministic runner
 4. Return the complete outcome, including reviewed HEAD, resolved base and merge base, Codex version, command result, read-only verification, terminal review output, and blocker evidence.
 5. Describe `status: passed` only as a completed local Codex preflight for that exact reviewed HEAD. Preserve and report all findings in `reviewOutput`; this skill does not disposition or fix them.
 
-The runner verifies the CLI, exact HEAD, base, non-empty merge diff, clean status, and absence of index flags that hide tracked changes before review. It computes the merge base, starts one non-interactive Codex review with a read-only sandbox, ephemeral session, JSON events, disabled hooks, caller user configuration and user/project rules ignored, candidate project Codex configuration disabled through an invocation-level untrusted-project override, normal `AGENTS.md` discovery preserved, and custom instructions forbidding skill use, then compares HEAD, complete worktree status, hidden index flags, and ignored-file fingerprints before and after execution.
+The runner removes Git's repository-local environment variables from scoped subprocesses, then verifies the CLI, exact HEAD, base, non-empty merge diff, mode- and submodule-sensitive clean status, and absence of index flags that hide tracked changes before review. It computes the merge base, starts one non-interactive Codex review with a read-only sandbox, ephemeral session, JSON events, disabled hooks, caller user configuration and user/project rules ignored, candidate project Codex configuration disabled through an invocation-level untrusted-project override, normal `AGENTS.md` discovery preserved, and custom instructions forbidding skill use, then compares HEAD, complete worktree status, hidden index flags, and ignored-file fingerprints before and after execution.
 
 ## Guardrails
 
@@ -29,5 +29,5 @@ The runner verifies the CLI, exact HEAD, base, non-empty merge diff, clean statu
 - Never commit, push, or publish a pull request.
 - Never watch or interact with GitHub.
 - Never claim GitHub Codex validation or equivalence with the hosted reviewer.
-- Never turn missing CLI or authentication, invalid target, dirty state, unexpected HEAD, empty diff, sandbox failure, command failure, malformed events, missing terminal output, or repository mutation into success.
+- Never turn subprocess-environment failure, missing CLI or authentication, invalid target, dirty state, unexpected HEAD, empty diff, sandbox failure, command failure, malformed events, missing terminal output, or repository mutation into success.
 - Never invoke Codex directly, run a second pass, or retry a blocked pass. A caller may start a fresh skill invocation after resolving the blocker or changing HEAD.

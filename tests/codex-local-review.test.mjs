@@ -57,13 +57,29 @@ async function createRepository({ candidate = true } = {}) {
   };
 }
 
+async function addSubmodule(fixture) {
+  const source = path.join(fixture.root, "submodule-source");
+  await mkdir(source);
+  await git(source, "init", "-b", "main");
+  await git(source, "config", "user.name", "Test User");
+  await git(source, "config", "user.email", "test@example.com");
+  await writeFile(path.join(source, "file.txt"), "submodule\n");
+  await git(source, "add", "file.txt");
+  await git(source, "commit", "-m", "submodule base");
+
+  await git(fixture.repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "dep");
+  await git(fixture.repo, "commit", "-m", "add submodule");
+  await git(fixture.repo, "config", "submodule.dep.ignore", "all");
+  fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+}
+
 async function installFakeCodex(root) {
   const bin = path.join(root, "bin");
   const log = path.join(root, "codex-invocations.jsonl");
   await mkdir(bin);
   const executable = path.join(bin, "codex");
   await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
@@ -75,6 +91,14 @@ if (args.includes("--version")) {
 appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(args) + "\\n");
 const mode = process.env.FAKE_CODEX_MODE || "success";
 const worktree = args[args.indexOf("--cd") + 1];
+if (mode === "check-git-environment") {
+  const localEnv = spawnSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" });
+  const inherited = localEnv.stdout.split(/\\r?\\n/).filter((name) => name && process.env[name] !== undefined);
+  if (localEnv.status !== 0 || inherited.length > 0) {
+    console.error("inherited Git-local environment: " + inherited.join(", "));
+    process.exit(8);
+  }
+}
 if (mode === "auth") {
   console.error("Not logged in. Run codex login.");
   process.exit(1);
@@ -112,6 +136,12 @@ if (mode === "rewrite-ignored") {
 if (mode === "hide-tracked-mutation") {
   writeFileSync(new URL("file.txt", "file://" + worktree + "/"), "hidden mutation\\n");
   spawnSync("git", ["-C", worktree, "update-index", "--assume-unchanged", "file.txt"]);
+}
+if (mode === "mutate-mode") {
+  chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o755);
+}
+if (mode === "mutate-submodule") {
+  writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
 }
 if (mode === "mutate-head") {
   writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
@@ -262,6 +292,28 @@ command = "candidate-side-effect"
   });
 });
 
+test("removes Git-local environment variables from Git and Codex subprocesses", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome, fake } = await invokeRunner(fixture, {
+      mode: "check-git-environment",
+      env: {
+        GIT_DIR: path.join(fixture.root, "redirected.git"),
+        GIT_WORK_TREE: fixture.root,
+        GIT_INDEX_FILE: path.join(fixture.root, "redirected.index"),
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "core.fileMode",
+        GIT_CONFIG_VALUE_0: "false",
+      },
+    });
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.worktree, fixture.repo);
+    assert.equal(outcome.actualHead, fixture.expectedHead);
+    assert.equal(await invocationCount(fake.log), 1);
+  });
+});
+
 test("blocks a worktree that is not a Git repository", async () => {
   await withFixture(async (fixture) => {
     const invalid = path.join(fixture.root, "not-a-repo");
@@ -317,6 +369,50 @@ test("blocks content changes to an existing ignored file", async () => {
     assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
     assert.equal(outcome.readOnly.before.completeStatus, outcome.readOnly.after.completeStatus);
     assert.notDeepEqual(outcome.readOnly.before.ignoredFiles, outcome.readOnly.after.ignoredFiles);
+  });
+});
+
+test("blocks tracked mode changes when core.fileMode is false", async () => {
+  await withFixture(async (fixture) => {
+    await git(fixture.repo, "config", "core.fileMode", "false");
+
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-mode" });
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+    assert.match(outcome.readOnly.after.completeStatus, /M file\.txt/);
+  });
+});
+
+test("blocks tracked submodule changes hidden by ignore=all", async () => {
+  await withFixture(async (fixture) => {
+    await addSubmodule(fixture);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-submodule" });
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.match(outcome.readOnly.after.completeStatus, /M dep/);
+  });
+});
+
+test("allows a clean uninitialized submodule when ignore=all is configured", async () => {
+  await withFixture(async (fixture) => {
+    await addSubmodule(fixture);
+    await git(fixture.repo, "submodule", "deinit", "-f", "dep");
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.readOnly.before.completeStatus, "");
+    assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
   });
 });
 
