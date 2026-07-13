@@ -331,6 +331,8 @@ async function runPreflight(options) {
     "--sandbox", "read-only",
     "--ephemeral",
     "--json",
+    "--ignore-user-config",
+    "--ignore-rules",
     "--config", "features.hooks=false",
     "--config", `projects.${JSON.stringify(outcome.worktree)}.trust_level="untrusted"`,
     "--cd", outcome.worktree,
