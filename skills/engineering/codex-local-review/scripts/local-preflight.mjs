@@ -2,8 +2,9 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readlink, realpath } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { access, copyFile, lstat, mkdtemp, readlink, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const usage = `Usage: local-preflight.mjs --worktree <path> --base <ref> --expected-head <sha>
@@ -79,8 +80,50 @@ function runProcess(command, args, options = {}) {
   });
 }
 
-async function sanitizedProcessEnvironment() {
-  const result = await runProcess("git", ["rev-parse", "--local-env-vars"]);
+function isWithin(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+async function resolveExecutable(name, env) {
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const extensions = process.platform === "win32"
+    ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  for (const entry of (env[pathKey] ?? "").split(path.delimiter)) {
+    const directory = path.resolve(entry || process.cwd());
+    for (const extension of extensions) {
+      const candidate = path.join(directory, `${name}${extension}`);
+      try {
+        await access(candidate, constants.X_OK);
+        return await realpath(candidate);
+      } catch {
+        // Continue searching PATH.
+      }
+    }
+  }
+  return null;
+}
+
+async function sanitizedProcessEnvironment(worktree) {
+  const env = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const safePath = [];
+  for (const entry of (env[pathKey] ?? "").split(path.delimiter)) {
+    const lexicalPath = path.resolve(entry || process.cwd());
+    let canonicalPath = lexicalPath;
+    try {
+      canonicalPath = await realpath(lexicalPath);
+    } catch {
+      // A missing PATH entry cannot currently supply an executable.
+    }
+    if (!isWithin(worktree, lexicalPath) && !isWithin(worktree, canonicalPath)) safePath.push(entry);
+  }
+  env[pathKey] = safePath.join(path.delimiter);
+
+  const gitExecutable = await resolveExecutable("git", env);
+  if (!gitExecutable) throw new Error("Git was not found outside the candidate worktree.");
+  const result = await runProcess(gitExecutable, ["rev-parse", "--local-env-vars"], { env });
   if (result.exitCode !== 0) {
     throw new Error(`Could not identify Git-local environment variables: ${commandFailure(result)}`);
   }
@@ -89,13 +132,34 @@ async function sanitizedProcessEnvironment() {
     throw new Error("Git returned an invalid local environment variable list.");
   }
 
-  const env = { ...process.env };
   for (const name of names) delete env[name];
-  return env;
+  return { env, gitExecutable };
 }
 
-async function git(worktree, args, env) {
-  return runProcess("git", ["-C", worktree, ...args], { env });
+async function git(worktree, args, env, gitExecutable) {
+  return runProcess(gitExecutable, ["-C", worktree, ...args], { env });
+}
+
+async function isolatedCodexEnvironment(env, worktree) {
+  const tempRoot = await realpath(os.tmpdir());
+  if (isWithin(worktree, tempRoot)) {
+    throw new Error("The temporary directory must be outside the candidate worktree.");
+  }
+
+  const codexHome = await mkdtemp(path.join(tempRoot, "codex-local-review-"));
+  const callerCodexHome = path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
+  try {
+    await copyFile(path.join(callerCodexHome, "auth.json"), path.join(codexHome, "auth.json"));
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      await rm(codexHome, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  return {
+    codexHome,
+    env: { ...env, CODEX_HOME: codexHome },
+  };
 }
 
 function commandFailure(result) {
@@ -146,26 +210,26 @@ function block(outcome, code, message, evidence = {}) {
   return outcome;
 }
 
-async function captureState(worktree, env) {
-  const headResult = await git(worktree, ["rev-parse", "HEAD"], env);
+async function captureState(worktree, env, gitExecutable) {
+  const headResult = await git(worktree, ["rev-parse", "HEAD"], env, gitExecutable);
   if (headResult.exitCode !== 0) throw new Error(`Could not read HEAD: ${commandFailure(headResult)}`);
   const statusResult = await git(worktree, [
     "-c", "core.fileMode=true",
     "status", "--porcelain=v1", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
-  ], env);
+  ], env, gitExecutable);
   if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
   const completeStatus = statusResult.stdout;
   const status = completeStatus
     .split(/(?<=\n)/)
     .filter((line) => !line.startsWith("!! "))
     .join("");
-  const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env);
+  const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env, gitExecutable);
   if (indexResult.exitCode !== 0) throw new Error(`Could not inspect index flags: ${commandFailure(indexResult)}`);
   const hiddenIndexEntries = indexResult.stdout
     .split("\0")
     .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith("S ")))
     .sort();
-  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env);
+  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env, gitExecutable);
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
   const ignoredFiles = [];
   for (const relativePath of ignoredResult.stdout.split("\0").filter(Boolean).sort()) {
@@ -264,15 +328,16 @@ async function runPreflight(options) {
   }
 
   let processEnv;
+  let gitExecutable;
   try {
-    processEnv = await sanitizedProcessEnvironment();
+    ({ env: processEnv, gitExecutable } = await sanitizedProcessEnvironment(outcome.worktree));
   } catch (error) {
     return block(outcome, "environment_failed", "Could not sanitize the subprocess environment.", {
       error: error.message,
     });
   }
 
-  const topLevelResult = await git(outcome.worktree, ["rev-parse", "--show-toplevel"], processEnv);
+  const topLevelResult = await git(outcome.worktree, ["rev-parse", "--show-toplevel"], processEnv, gitExecutable);
   if (topLevelResult.exitCode !== 0) {
     return block(outcome, "invalid_target", "The worktree is not a Git repository.", {
       error: commandFailure(topLevelResult),
@@ -283,10 +348,12 @@ async function runPreflight(options) {
     return block(outcome, "invalid_target", "The worktree must be the repository top level.", { topLevel });
   }
 
-  const versionResult = await runProcess("codex", ["--version"], { env: processEnv });
-  if (versionResult.error?.code === "ENOENT") {
-    return block(outcome, "codex_missing", "Codex CLI was not found on PATH.", versionResult.error);
+  const codexExecutable = await resolveExecutable("codex", processEnv);
+  if (!codexExecutable) {
+    return block(outcome, "codex_missing", "Codex CLI was not found on PATH.");
   }
+  outcome.command.executable = codexExecutable;
+  const versionResult = await runProcess(codexExecutable, ["--version"], { env: processEnv });
   if (versionResult.exitCode !== 0) {
     return block(outcome, "codex_unavailable", "Codex CLI version check failed.", {
       error: commandFailure(versionResult),
@@ -297,7 +364,7 @@ async function runPreflight(options) {
 
   let before;
   try {
-    before = await captureState(outcome.worktree, processEnv);
+    before = await captureState(outcome.worktree, processEnv, gitExecutable);
   } catch (error) {
     return block(outcome, "invalid_target", "Could not inspect the candidate repository.", { error: error.message });
   }
@@ -323,7 +390,7 @@ async function runPreflight(options) {
 
   const baseResult = await git(outcome.worktree, [
     "rev-parse", "--verify", "--quiet", "--end-of-options", `${outcome.base.reference}^{commit}`,
-  ], processEnv);
+  ], processEnv, gitExecutable);
   if (baseResult.exitCode !== 0) {
     return block(outcome, "invalid_base", "The base reference does not resolve to a commit.", {
       base: outcome.base.reference,
@@ -332,7 +399,7 @@ async function runPreflight(options) {
   }
   outcome.base.resolvedHead = baseResult.stdout.trim();
 
-  const mergeBaseResult = await git(outcome.worktree, ["merge-base", outcome.base.resolvedHead, before.head], processEnv);
+  const mergeBaseResult = await git(outcome.worktree, ["merge-base", outcome.base.resolvedHead, before.head], processEnv, gitExecutable);
   if (mergeBaseResult.exitCode !== 0 || !mergeBaseResult.stdout.trim()) {
     return block(outcome, "invalid_base", "The base and expected HEAD do not have a merge base.", {
       error: commandFailure(mergeBaseResult),
@@ -340,7 +407,7 @@ async function runPreflight(options) {
   }
   outcome.mergeBase = mergeBaseResult.stdout.trim();
 
-  const diffResult = await git(outcome.worktree, ["diff", "--quiet", `${outcome.mergeBase}...${before.head}`, "--"], processEnv);
+  const diffResult = await git(outcome.worktree, ["diff", "--quiet", `${outcome.mergeBase}...${before.head}`, "--"], processEnv, gitExecutable);
   if (diffResult.exitCode === 0) {
     return block(outcome, "empty_diff", "The merge diff is empty.", {
       mergeBase: outcome.mergeBase,
@@ -361,20 +428,40 @@ async function runPreflight(options) {
     "--ignore-user-config",
     "--ignore-rules",
     "--config", "features.hooks=false",
+    "--config", "skills.include_instructions=false",
     "--config", `projects.${JSON.stringify(outcome.worktree)}.trust_level="untrusted"`,
     "--cd", outcome.worktree,
     "review",
     reviewInstructions(outcome),
   ];
-  outcome.command.attempted = true;
   outcome.command.args = args;
   outcome.reviewedHead = before.head;
-  const result = await runProcess("codex", args, { env: processEnv });
+  let isolated;
+  try {
+    isolated = await isolatedCodexEnvironment(processEnv, outcome.worktree);
+  } catch (error) {
+    return block(outcome, "environment_failed", "Could not isolate Codex authentication from caller instructions.", {
+      error: error.message,
+    });
+  }
+
+  outcome.command.attempted = true;
+  let result;
+  let cleanupError = null;
+  try {
+    result = await runProcess(codexExecutable, args, { env: isolated.env });
+  } finally {
+    try {
+      await rm(isolated.codexHome, { recursive: true, force: true });
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
   Object.assign(outcome.command, result);
 
   let after;
   try {
-    after = await captureState(outcome.worktree, processEnv);
+    after = await captureState(outcome.worktree, processEnv, gitExecutable);
     outcome.readOnly.after = after;
     outcome.readOnly.headUnchanged = before.head === after.head;
     outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
@@ -397,6 +484,11 @@ async function runPreflight(options) {
     return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, hidden index flags, or ignored file contents changed during review.", {
       before,
       after,
+    });
+  }
+  if (cleanupError) {
+    return block(outcome, "environment_failed", "Could not remove the isolated Codex home.", {
+      error: cleanupError.message,
     });
   }
   if (result.error?.code === "ENOENT") {
