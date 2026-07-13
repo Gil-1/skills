@@ -2,7 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readlink, realpath } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { lstat, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 
 const usage = `Usage: local-preflight.mjs --worktree <path> --base <ref> --expected-head <sha>
@@ -116,6 +117,7 @@ function createOutcome(options = {}) {
       after: null,
       headUnchanged: null,
       statusUnchanged: null,
+      indexFlagsUnchanged: null,
       ignoredFilesUnchanged: null,
       verified: false,
     },
@@ -139,25 +141,35 @@ async function captureState(worktree) {
     .split(/(?<=\n)/)
     .filter((line) => !line.startsWith("!! "))
     .join("");
+  const indexResult = await git(worktree, ["ls-files", "-v", "-z"]);
+  if (indexResult.exitCode !== 0) throw new Error(`Could not inspect index flags: ${commandFailure(indexResult)}`);
+  const hiddenIndexEntries = indexResult.stdout
+    .split("\0")
+    .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith("S ")))
+    .sort();
   const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
   const ignoredFiles = [];
   for (const relativePath of ignoredResult.stdout.split("\0").filter(Boolean).sort()) {
     const absolutePath = path.join(worktree, relativePath);
     const stats = await lstat(absolutePath);
-    const content = stats.isSymbolicLink()
-      ? Buffer.from(await readlink(absolutePath))
-      : stats.isFile() ? await readFile(absolutePath) : Buffer.alloc(0);
+    const hash = createHash("sha256");
+    if (stats.isSymbolicLink()) {
+      hash.update(await readlink(absolutePath));
+    } else if (stats.isFile()) {
+      for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
+    }
     ignoredFiles.push({
       path: relativePath,
       mode: stats.mode,
-      digest: createHash("sha256").update(content).digest("hex"),
+      digest: hash.digest("hex"),
     });
   }
   return {
     head: headResult.stdout.trim(),
     status,
     completeStatus,
+    hiddenIndexEntries,
     ignoredFiles,
   };
 }
@@ -276,6 +288,11 @@ async function runPreflight(options) {
       status: before.status,
     });
   }
+  if (before.hiddenIndexEntries.length > 0) {
+    return block(outcome, "dirty_worktree", "Worktree cleanliness cannot be verified while tracked paths use hidden index flags.", {
+      hiddenIndexEntries: before.hiddenIndexEntries,
+    });
+  }
 
   const baseResult = await git(outcome.worktree, [
     "rev-parse", "--verify", "--quiet", "--end-of-options", `${outcome.base.reference}^{commit}`,
@@ -331,9 +348,11 @@ async function runPreflight(options) {
     outcome.readOnly.after = after;
     outcome.readOnly.headUnchanged = before.head === after.head;
     outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
+    outcome.readOnly.indexFlagsUnchanged = JSON.stringify(before.hiddenIndexEntries) === JSON.stringify(after.hiddenIndexEntries);
     outcome.readOnly.ignoredFilesUnchanged = JSON.stringify(before.ignoredFiles) === JSON.stringify(after.ignoredFiles);
     outcome.readOnly.verified = outcome.readOnly.headUnchanged
       && outcome.readOnly.statusUnchanged
+      && outcome.readOnly.indexFlagsUnchanged
       && outcome.readOnly.ignoredFilesUnchanged;
   } catch (error) {
     return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
@@ -345,7 +364,7 @@ async function runPreflight(options) {
   if (!parsed.error) outcome.reviewOutput = terminalReviewOutput(parsed.events);
 
   if (!outcome.readOnly.verified) {
-    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, or ignored file contents changed during review.", {
+    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, hidden index flags, or ignored file contents changed during review.", {
       before,
       after,
     });

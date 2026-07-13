@@ -109,6 +109,10 @@ if (mode === "mutate-ignored") {
 if (mode === "rewrite-ignored") {
   writeFileSync(new URL("baseline.ignored", "file://" + worktree + "/"), "rewritten\\n");
 }
+if (mode === "hide-tracked-mutation") {
+  writeFileSync(new URL("file.txt", "file://" + worktree + "/"), "hidden mutation\\n");
+  spawnSync("git", ["-C", worktree, "update-index", "--assume-unchanged", "file.txt"]);
+}
 if (mode === "mutate-head") {
   writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
   spawnSync("git", ["-C", worktree, "add", "codex-committed.txt"]);
@@ -269,6 +273,25 @@ test("blocks content changes to an existing ignored file", async () => {
   });
 });
 
+for (const [flag, tag] of [
+  ["--assume-unchanged", "h"],
+  ["--skip-worktree", "S"],
+]) {
+  test(`blocks tracked changes hidden by ${flag}`, async () => {
+    await withFixture(async (fixture) => {
+      await git(fixture.repo, "update-index", flag, "file.txt");
+      await writeFile(path.join(fixture.repo, "file.txt"), "hidden dirty state\n");
+      assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+      const { processResult, outcome, fake } = await invokeRunner(fixture);
+      assert.equal(processResult.exitCode, 1);
+      assert.equal(outcome.blocker.code, "dirty_worktree");
+      assert.deepEqual(outcome.blocker.evidence.hiddenIndexEntries, [`${tag} file.txt`]);
+      assert.equal(await invocationCount(fake.log), 0);
+    });
+  });
+}
+
 test("blocks a missing base reference", async () => {
   await withFixture(async (fixture) => {
     const { outcome, fake } = await invokeRunner(fixture, { base: "missing-base" });
@@ -356,7 +379,7 @@ test("allows non-fatal Codex warning items before a completed review", async () 
   });
 });
 
-for (const mode of ["mutate-status", "mutate-ignored", "mutate-head"]) {
+for (const mode of ["mutate-status", "mutate-ignored", "hide-tracked-mutation", "mutate-head"]) {
   test(`blocks repository ${mode} mutation after review`, async () => {
     await withFixture(async (fixture) => {
       const { outcome } = await invokeRunner(fixture, { mode });
@@ -364,6 +387,10 @@ for (const mode of ["mutate-status", "mutate-ignored", "mutate-head"]) {
       assert.equal(outcome.readOnly.verified, false);
       assert.notDeepEqual(outcome.readOnly.before, outcome.readOnly.after);
       assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
+      if (mode === "hide-tracked-mutation") {
+        assert.equal(outcome.readOnly.statusUnchanged, true);
+        assert.equal(outcome.readOnly.indexFlagsUnchanged, false);
+      }
     });
   });
 }
