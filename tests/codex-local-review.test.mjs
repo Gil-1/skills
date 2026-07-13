@@ -113,6 +113,7 @@ console.log(JSON.stringify({
     text: "P1: preserve this finding\\n\\nP3: preserve this detail",
   },
 }));
+if (mode === "premature-eof") process.exit(0);
 console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 8 } }));
 `);
   await chmod(executable, 0o755);
@@ -278,6 +279,17 @@ test("blocks valid events without terminal review output", async () => {
     const { outcome } = await invokeRunner(fixture, { mode: "missing-output" });
     assert.equal(outcome.blocker.code, "missing_terminal_output");
     assert.equal(outcome.reviewOutput, null);
+  });
+});
+
+test("blocks premature EOF after an agent message", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "premature-eof" });
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "missing_terminal_output");
+    assert.equal(outcome.reviewOutput, null);
+    assert.match(outcome.command.stdout, /agent_message/);
+    assert.doesNotMatch(outcome.command.stdout, /turn\.completed/);
   });
 });
 

@@ -172,11 +172,15 @@ function parseEvents(stdout) {
 }
 
 function terminalReviewOutput(events) {
-  return events
-    .filter((event) => event.type === "item.completed")
-    .map((event) => event.item)
-    .filter((item) => item?.type === "agent_message" && typeof item.text === "string" && item.text.trim())
-    .at(-1)?.text ?? null;
+  const outputIndex = events.findLastIndex((event) =>
+    event.type === "item.completed"
+      && event.item?.type === "agent_message"
+      && typeof event.item.text === "string"
+      && event.item.text.trim());
+  if (outputIndex === -1) return null;
+
+  const turnCompleted = events.slice(outputIndex + 1).some((event) => event.type === "turn.completed");
+  return turnCompleted ? events[outputIndex].item.text : null;
 }
 
 function eventFailure(events) {
