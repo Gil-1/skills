@@ -332,6 +332,7 @@ async function runPreflight(options) {
     "--ephemeral",
     "--json",
     "--config", "features.hooks=false",
+    "--config", `projects.${JSON.stringify(outcome.worktree)}.trust_level="untrusted"`,
     "--cd", outcome.worktree,
     "review",
     reviewInstructions(outcome),

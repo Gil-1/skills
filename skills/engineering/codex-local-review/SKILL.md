@@ -21,7 +21,7 @@ Run exactly one local Codex review pass through the bundled deterministic runner
 4. Return the complete outcome, including reviewed HEAD, resolved base and merge base, Codex version, command result, read-only verification, terminal review output, and blocker evidence.
 5. Describe `status: passed` only as a completed local Codex preflight for that exact reviewed HEAD. Preserve and report all findings in `reviewOutput`; this skill does not disposition or fix them.
 
-The runner verifies the CLI, exact HEAD, base, non-empty merge diff, clean status, and absence of index flags that hide tracked changes before review. It computes the merge base, starts one non-interactive Codex review with a read-only sandbox, ephemeral session, JSON events, disabled hooks, and custom instructions forbidding skill use, then compares HEAD, complete worktree status, hidden index flags, and ignored-file fingerprints before and after execution.
+The runner verifies the CLI, exact HEAD, base, non-empty merge diff, clean status, and absence of index flags that hide tracked changes before review. It computes the merge base, starts one non-interactive Codex review with a read-only sandbox, ephemeral session, JSON events, disabled hooks, candidate project Codex configuration disabled through an invocation-level untrusted-project override, and custom instructions forbidding skill use, then compares HEAD, complete worktree status, hidden index flags, and ignored-file fingerprints before and after execution.
 
 ## Guardrails
 
