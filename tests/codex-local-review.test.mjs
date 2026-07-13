@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -93,7 +93,7 @@ if (args.includes("--version")) {
 appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(args) + "\\n");
 const mode = process.env.FAKE_CODEX_MODE || "success";
 const worktree = args[args.indexOf("--cd") + 1];
-if (mode === "check-isolated-home") {
+if (mode === "check-isolated-home" || mode === "refresh-auth") {
   writeFileSync(process.env.FAKE_CODEX_HOME_LOG, process.env.CODEX_HOME);
   if (process.env.CODEX_HOME === process.env.CALLER_CODEX_HOME
       || existsSync(path.join(process.env.CODEX_HOME, "AGENTS.md"))
@@ -101,11 +101,14 @@ if (mode === "check-isolated-home") {
     console.error("Codex home was not isolated from caller instructions while retaining auth");
     process.exit(9);
   }
+  if (mode === "refresh-auth") {
+    writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "refreshed-auth\\n");
+  }
 }
 if (mode === "check-git-environment") {
   const localEnv = spawnSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" });
   const inherited = localEnv.stdout.split(/\\r?\\n/).filter((name) => name && process.env[name] !== undefined);
-  if (localEnv.status !== 0 || inherited.length > 0) {
+  if (localEnv.status !== 0 || inherited.length > 0 || process.env.GIT_OPTIONAL_LOCKS !== "0") {
     console.error("inherited Git-local environment: " + inherited.join(", "));
     process.exit(8);
   }
@@ -296,7 +299,7 @@ test("isolates global instructions while retaining caller authentication", async
     await writeFile(path.join(codexHome, "auth.json"), "test-auth\n");
 
     const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      mode: "check-isolated-home",
+      mode: "refresh-auth",
       env: { CALLER_CODEX_HOME: codexHome, CODEX_HOME: codexHome },
     });
 
@@ -305,6 +308,22 @@ test("isolates global instructions while retaining caller authentication", async
     const isolatedHome = await readFile(fake.homeLog, "utf8");
     assert.notEqual(isolatedHome, codexHome);
     await assert.rejects(readFile(isolatedHome, "utf8"), { code: "ENOENT" });
+    assert.equal(await readFile(path.join(codexHome, "auth.json"), "utf8"), "refreshed-auth\n");
+  });
+});
+
+test("does not refresh a stale index while inspecting the candidate", async () => {
+  await withFixture(async (fixture) => {
+    const indexPath = path.resolve(fixture.repo, await git(fixture.repo, "rev-parse", "--git-path", "index"));
+    const indexBefore = await readFile(indexPath);
+    const future = new Date(Date.now() + 60_000);
+    await utimes(path.join(fixture.repo, "file.txt"), future, future);
+
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "check-git-environment" });
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.deepEqual(await readFile(indexPath), indexBefore);
   });
 });
 

@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { access, copyFile, lstat, mkdtemp, readlink, realpath, rm } from "node:fs/promises";
+import { access, lstat, mkdtemp, readlink, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -107,6 +107,7 @@ async function resolveExecutable(name, env) {
 
 async function sanitizedProcessEnvironment(worktree) {
   const env = { ...process.env };
+  env.GIT_OPTIONAL_LOCKS = "0";
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   const safePath = [];
   for (const entry of (env[pathKey] ?? "").split(path.delimiter)) {
@@ -148,8 +149,10 @@ async function isolatedCodexEnvironment(env, worktree) {
 
   const codexHome = await mkdtemp(path.join(tempRoot, "codex-local-review-"));
   const callerCodexHome = path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
+  const callerAuth = path.join(callerCodexHome, "auth.json");
   try {
-    await copyFile(path.join(callerCodexHome, "auth.json"), path.join(codexHome, "auth.json"));
+    await access(callerAuth);
+    await symlink(callerAuth, path.join(codexHome, "auth.json"), "file");
   } catch (error) {
     if (error.code !== "ENOENT") {
       await rm(codexHome, { recursive: true, force: true });
