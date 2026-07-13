@@ -39,7 +39,8 @@ async function createRepository({ candidate = true } = {}) {
   await git(repo, "config", "user.name", "Test User");
   await git(repo, "config", "user.email", "test@example.com");
   await writeFile(path.join(repo, "file.txt"), "base\n");
-  await git(repo, "add", "file.txt");
+  await writeFile(path.join(repo, ".gitignore"), "*.ignored\n");
+  await git(repo, "add", "file.txt", ".gitignore");
   await git(repo, "commit", "-m", "base");
   const baseHead = await git(repo, "rev-parse", "HEAD");
   await git(repo, "switch", "-c", "ticket");
@@ -90,6 +91,10 @@ if (mode === "malformed") {
   console.log("not-json");
   process.exit(0);
 }
+if (mode === "fatal-event") {
+  console.log(JSON.stringify({ type: "error", message: "fatal Codex error" }));
+  process.exit(0);
+}
 if (mode === "missing-output") {
   console.log(JSON.stringify({ type: "thread.started", thread_id: "test" }));
   console.log(JSON.stringify({ type: "turn.completed" }));
@@ -98,6 +103,9 @@ if (mode === "missing-output") {
 if (mode === "mutate-status") {
   writeFileSync(new URL("codex-created.txt", "file://" + worktree + "/"), "mutation\\n");
 }
+if (mode === "mutate-ignored") {
+  writeFileSync(new URL("codex-created.ignored", "file://" + worktree + "/"), "mutation\\n");
+}
 if (mode === "mutate-head") {
   writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
   spawnSync("git", ["-C", worktree, "add", "codex-committed.txt"]);
@@ -105,6 +113,12 @@ if (mode === "mutate-head") {
 }
 console.log(JSON.stringify({ type: "thread.started", thread_id: "test" }));
 console.log(JSON.stringify({ type: "turn.started" }));
+if (mode === "warning") {
+  console.log(JSON.stringify({
+    type: "item.completed",
+    item: { id: "warning_0", type: "error", message: "non-fatal config warning" },
+  }));
+}
 console.log(JSON.stringify({
   type: "item.completed",
   item: {
@@ -181,7 +195,7 @@ test("captures one isolated local review against the runner-computed merge base"
 
     const args = outcome.command.args;
     assert.deepEqual(args.slice(0, 7), [
-      "exec", "--sandbox", "read-only", "--ephemeral", "--json", "--config", "hooks=[]",
+      "exec", "--sandbox", "read-only", "--ephemeral", "--json", "--config", "features.hooks=false",
     ]);
     assert.equal(args[7], "--cd");
     assert.equal(args[8], fixture.repo);
@@ -222,6 +236,18 @@ test("blocks untracked files as dirty worktree state", async () => {
     assert.equal(outcome.blocker.code, "dirty_worktree");
     assert.match(outcome.blocker.evidence.status, /\?\? untracked\.txt/);
     assert.equal(await invocationCount(fake.log), 0);
+  });
+});
+
+test("allows ignored files in the initial clean worktree state", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(path.join(fixture.repo, "baseline.ignored"), "ignored\n");
+    const { processResult, outcome } = await invokeRunner(fixture);
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.readOnly.before.status, "");
+    assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
+    assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
   });
 });
 
@@ -274,6 +300,14 @@ test("blocks malformed JSON events", async () => {
   });
 });
 
+test("blocks fatal Codex events", async () => {
+  await withFixture(async (fixture) => {
+    const { outcome } = await invokeRunner(fixture, { mode: "fatal-event" });
+    assert.equal(outcome.blocker.code, "codex_event_error");
+    assert.equal(outcome.blocker.evidence.event.type, "error");
+  });
+});
+
 test("blocks valid events without terminal review output", async () => {
   await withFixture(async (fixture) => {
     const { outcome } = await invokeRunner(fixture, { mode: "missing-output" });
@@ -293,7 +327,18 @@ test("blocks premature EOF after an agent message", async () => {
   });
 });
 
-for (const mode of ["mutate-status", "mutate-head"]) {
+test("allows non-fatal Codex warning items before a completed review", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "warning" });
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.blocker, null);
+    assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
+    assert.match(outcome.command.stdout, /non-fatal config warning/);
+  });
+});
+
+for (const mode of ["mutate-status", "mutate-ignored", "mutate-head"]) {
   test(`blocks repository ${mode} mutation after review`, async () => {
     await withFixture(async (fixture) => {
       const { outcome } = await invokeRunner(fixture, { mode });

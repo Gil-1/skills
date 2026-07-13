@@ -130,11 +130,17 @@ function block(outcome, code, message, evidence = {}) {
 async function captureState(worktree) {
   const headResult = await git(worktree, ["rev-parse", "HEAD"]);
   if (headResult.exitCode !== 0) throw new Error(`Could not read HEAD: ${commandFailure(headResult)}`);
-  const statusResult = await git(worktree, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  const statusResult = await git(worktree, ["status", "--porcelain=v1", "--untracked-files=all", "--ignored"]);
   if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
+  const completeStatus = statusResult.stdout;
+  const status = completeStatus
+    .split(/(?<=\n)/)
+    .filter((line) => !line.startsWith("!! "))
+    .join("");
   return {
     head: headResult.stdout.trim(),
-    status: statusResult.stdout,
+    status,
+    completeStatus,
   };
 }
 
@@ -184,7 +190,7 @@ function terminalReviewOutput(events) {
 }
 
 function eventFailure(events) {
-  return events.find((event) => event.type === "error" || event.type === "turn.failed" || event.item?.type === "error");
+  return events.find((event) => event.type === "error" || event.type === "turn.failed");
 }
 
 function commandBlocker(result) {
@@ -290,7 +296,7 @@ async function runPreflight(options) {
     "--sandbox", "read-only",
     "--ephemeral",
     "--json",
-    "--config", "hooks=[]",
+    "--config", "features.hooks=false",
     "--cd", outcome.worktree,
     "review",
     reviewInstructions(outcome),
@@ -306,7 +312,7 @@ async function runPreflight(options) {
     after = await captureState(outcome.worktree);
     outcome.readOnly.after = after;
     outcome.readOnly.headUnchanged = before.head === after.head;
-    outcome.readOnly.statusUnchanged = before.status === after.status;
+    outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
     outcome.readOnly.verified = outcome.readOnly.headUnchanged && outcome.readOnly.statusUnchanged;
   } catch (error) {
     return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
