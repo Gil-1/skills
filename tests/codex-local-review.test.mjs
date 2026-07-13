@@ -106,6 +106,9 @@ if (mode === "mutate-status") {
 if (mode === "mutate-ignored") {
   writeFileSync(new URL("codex-created.ignored", "file://" + worktree + "/"), "mutation\\n");
 }
+if (mode === "rewrite-ignored") {
+  writeFileSync(new URL("baseline.ignored", "file://" + worktree + "/"), "rewritten\\n");
+}
 if (mode === "mutate-head") {
   writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
   spawnSync("git", ["-C", worktree, "add", "codex-committed.txt"]);
@@ -248,6 +251,21 @@ test("allows ignored files in the initial clean worktree state", async () => {
     assert.equal(outcome.readOnly.before.status, "");
     assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
     assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
+  });
+});
+
+test("blocks content changes to an existing ignored file", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(path.join(fixture.repo, "baseline.ignored"), "ignored\n");
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "rewrite-ignored" });
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, true);
+    assert.equal(outcome.readOnly.ignoredFilesUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
+    assert.equal(outcome.readOnly.before.completeStatus, outcome.readOnly.after.completeStatus);
+    assert.notDeepEqual(outcome.readOnly.before.ignoredFiles, outcome.readOnly.after.ignoredFiles);
   });
 });
 

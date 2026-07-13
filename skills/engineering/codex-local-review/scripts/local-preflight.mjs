@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 
 const usage = `Usage: local-preflight.mjs --worktree <path> --base <ref> --expected-head <sha>
@@ -115,6 +116,7 @@ function createOutcome(options = {}) {
       after: null,
       headUnchanged: null,
       statusUnchanged: null,
+      ignoredFilesUnchanged: null,
       verified: false,
     },
     reviewOutput: null,
@@ -137,10 +139,26 @@ async function captureState(worktree) {
     .split(/(?<=\n)/)
     .filter((line) => !line.startsWith("!! "))
     .join("");
+  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+  if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
+  const ignoredFiles = [];
+  for (const relativePath of ignoredResult.stdout.split("\0").filter(Boolean).sort()) {
+    const absolutePath = path.join(worktree, relativePath);
+    const stats = await lstat(absolutePath);
+    const content = stats.isSymbolicLink()
+      ? Buffer.from(await readlink(absolutePath))
+      : stats.isFile() ? await readFile(absolutePath) : Buffer.alloc(0);
+    ignoredFiles.push({
+      path: relativePath,
+      mode: stats.mode,
+      digest: createHash("sha256").update(content).digest("hex"),
+    });
+  }
   return {
     head: headResult.stdout.trim(),
     status,
     completeStatus,
+    ignoredFiles,
   };
 }
 
@@ -313,7 +331,10 @@ async function runPreflight(options) {
     outcome.readOnly.after = after;
     outcome.readOnly.headUnchanged = before.head === after.head;
     outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
-    outcome.readOnly.verified = outcome.readOnly.headUnchanged && outcome.readOnly.statusUnchanged;
+    outcome.readOnly.ignoredFilesUnchanged = JSON.stringify(before.ignoredFiles) === JSON.stringify(after.ignoredFiles);
+    outcome.readOnly.verified = outcome.readOnly.headUnchanged
+      && outcome.readOnly.statusUnchanged
+      && outcome.readOnly.ignoredFilesUnchanged;
   } catch (error) {
     return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
       error: error.message,
@@ -324,7 +345,7 @@ async function runPreflight(options) {
   if (!parsed.error) outcome.reviewOutput = terminalReviewOutput(parsed.events);
 
   if (!outcome.readOnly.verified) {
-    return block(outcome, "repository_mutated", "Repository HEAD or complete worktree status changed during review.", {
+    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, or ignored file contents changed during review.", {
       before,
       after,
     });
