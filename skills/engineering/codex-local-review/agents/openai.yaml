@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Local Review"
+  short_description: "Run one pinned, read-only local Codex preflight"
+  default_prompt: "Use $codex-local-review to run one isolated local Codex review against the supplied clean worktree, base reference, and expected HEAD, then return the complete review-only outcome."
