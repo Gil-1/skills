@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -565,6 +566,109 @@ test("allows Git-clean symlinks represented as regular files", async () => {
     assert.equal(processResult.exitCode, 0);
     assert.equal(outcome.status, "passed");
     assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+  });
+});
+
+test("allows clean CRLF worktree bytes normalized to LF in the index", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt text eol=crlf\n");
+    await writeFile(path.join(fixture.repo, "file.txt"), "base\r\ncandidate\r\ncrlf\r\n");
+    await git(fixture.repo, "add", ".gitattributes", "file.txt");
+    await git(fixture.repo, "commit", "-m", "use CRLF checkout bytes");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    const indexOid = await git(fixture.repo, "rev-parse", "HEAD:file.txt");
+    const rawOid = await git(fixture.repo, "hash-object", "--no-filters", "--", "file.txt");
+    assert.notEqual(rawOid, indexOid);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+  });
+});
+
+test("allows clean Git LFS worktree bytes without invoking the configured filter", {
+  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const log = path.join(fixture.root, "lfs-filter-ran.txt");
+    const filter = path.join(fixture.root, "lfs-clean-filter");
+    await writeFile(filter, `#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
+
+appendFileSync(${JSON.stringify(log)}, "ran\\n");
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const content = Buffer.concat(chunks);
+const oid = createHash("sha256").update(content).digest("hex");
+process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\${oid}\\nsize \${content.length}\\n\`);
+`);
+    await chmod(filter, 0o755);
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "asset.bin filter=lfs diff=lfs merge=lfs -text\n");
+    const content = Buffer.from("large binary content\0with bytes\n");
+    await writeFile(path.join(fixture.repo, "asset.bin"), content);
+    await git(fixture.repo, "config", "filter.lfs.clean", filter);
+    await git(fixture.repo, "config", "filter.lfs.required", "true");
+    await git(fixture.repo, "add", ".gitattributes", "asset.bin");
+    await git(fixture.repo, "commit", "-m", "add LFS content");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+    await rm(log);
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+    assert.equal(
+      outcome.readOnly.before.trackedFiles.digest,
+      outcome.readOnly.after.trackedFiles.digest,
+    );
+    assert.match(
+      await git(fixture.repo, "show", "HEAD:asset.bin"),
+      new RegExp(`oid sha256:${createHash("sha256").update(content).digest("hex")}`),
+    );
+    await assert.rejects(readFile(log), { code: "ENOENT" });
+  });
+});
+
+test("blocks transformed custom-filter files without invoking their clean command", {
+  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const log = path.join(fixture.root, "custom-filter-ran.txt");
+    const filter = path.join(fixture.root, "uppercase-clean-filter");
+    await writeFile(filter, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+
+appendFileSync(${JSON.stringify(log)}, "ran\\n");
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
+`);
+    await chmod(filter, 0o755);
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "custom.txt filter=uppercase\n");
+    await writeFile(path.join(fixture.repo, "custom.txt"), "worktree form\n");
+    await git(fixture.repo, "config", "filter.uppercase.clean", filter);
+    await git(fixture.repo, "add", ".gitattributes", "custom.txt");
+    await git(fixture.repo, "commit", "-m", "add custom-filtered content");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+    await rm(log);
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "dirty_worktree");
+    assert.match(
+      outcome.blocker.evidence.status ?? JSON.stringify(outcome.blocker.evidence.trackedFiles),
+      /custom\.txt/,
+    );
+    assert.equal(await invocationCount(fake.log), 0);
+    await assert.rejects(readFile(log), { code: "ENOENT" });
   });
 });
 

@@ -200,6 +200,95 @@ function commandFailure(result) {
   return result.error?.message || result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
 }
 
+async function attributesForPaths(worktree, relativePaths, env, gitExecutable) {
+  const names = ["filter", "text", "eol", "working-tree-encoding"];
+  const paths = [...new Set(relativePaths)];
+  if (paths.length === 0) return new Map();
+  const result = await runProcess(gitExecutable, [
+    "-C", worktree, "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", ...names,
+  ], { env, input: `${paths.join("\0")}\0` });
+  if (result.exitCode !== 0) throw new Error(`Could not inspect tracked file attributes: ${commandFailure(result)}`);
+  const fields = result.stdout.split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  if (fields.length !== paths.length * names.length * 3) {
+    throw new Error("Git returned invalid tracked file attributes.");
+  }
+
+  const attributesByPath = new Map(paths.map((relativePath) => [relativePath, {}]));
+  for (let index = 0; index < fields.length; index += 3) {
+    const attributes = attributesByPath.get(fields[index]);
+    if (!attributes || !names.includes(fields[index + 1])) {
+      throw new Error("Git returned invalid tracked file attributes.");
+    }
+    attributes[fields[index + 1]] = fields[index + 2];
+  }
+  if ([...attributesByPath.values()].some((attributes) => names.some((name) => !(name in attributes)))) {
+    throw new Error("Git returned incomplete tracked file attributes.");
+  }
+  return attributesByPath;
+}
+
+async function forEachCrlfNormalizedChunk(absolutePath, callback) {
+  let pendingCr = false;
+  for await (const chunk of createReadStream(absolutePath)) {
+    const output = Buffer.allocUnsafe(chunk.length + (pendingCr ? 1 : 0));
+    let outputLength = 0;
+    for (const byte of chunk) {
+      if (pendingCr) {
+        if (byte === 0x0a) {
+          output[outputLength] = byte;
+          outputLength += 1;
+          pendingCr = false;
+          continue;
+        }
+        output[outputLength] = 0x0d;
+        outputLength += 1;
+        pendingCr = false;
+      }
+      if (byte === 0x0d) {
+        pendingCr = true;
+      } else {
+        output[outputLength] = byte;
+        outputLength += 1;
+      }
+    }
+    if (outputLength > 0) callback(output.subarray(0, outputLength));
+  }
+  if (pendingCr) callback(Buffer.from([0x0d]));
+}
+
+async function crlfNormalizedBlobOid(absolutePath, expectedOid) {
+  let size = 0;
+  await forEachCrlfNormalizedChunk(absolutePath, (chunk) => { size += chunk.length; });
+  const algorithm = expectedOid.length === 40 ? "sha1" : expectedOid.length === 64 ? "sha256" : null;
+  if (!algorithm) throw new Error("Git returned an unsupported object ID.");
+  const hash = createHash(algorithm).update(`blob ${size}\0`);
+  await forEachCrlfNormalizedChunk(absolutePath, (chunk) => { hash.update(chunk); });
+  return hash.digest("hex");
+}
+
+function usesBuiltInTextNormalization(attributes, autocrlf, containsNul) {
+  if (!["unspecified", "unset"].includes(attributes["working-tree-encoding"])) return false;
+  if (attributes.text === "unset") return false;
+  if (["lf", "crlf"].includes(attributes.eol.toLowerCase())) return true;
+  if (attributes.text === "set") return true;
+  if (attributes.text === "auto") return !containsNul;
+  return ["true", "yes", "on", "1", "input"].includes(autocrlf) && !containsNul;
+}
+
+async function matchesLfsPointer(worktree, expectedOid, worktreeDigest, size, env, gitExecutable) {
+  const sizeResult = await git(worktree, ["cat-file", "-s", expectedOid], env, gitExecutable);
+  if (sizeResult.exitCode !== 0) throw new Error(`Could not inspect an LFS pointer: ${commandFailure(sizeResult)}`);
+  const pointerSize = Number(sizeResult.stdout.trim());
+  if (!Number.isSafeInteger(pointerSize) || pointerSize < 0 || pointerSize > 65_536) return false;
+  const pointerResult = await git(worktree, ["cat-file", "blob", expectedOid], env, gitExecutable);
+  if (pointerResult.exitCode !== 0) throw new Error(`Could not inspect an LFS pointer: ${commandFailure(pointerResult)}`);
+  const match = pointerResult.stdout.match(
+    /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n(?:ext-[^\r\n]+\n)*oid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n?$/,
+  );
+  return Boolean(match && match[1] === worktreeDigest && match[2] === String(size));
+}
+
 function createOutcome(options = {}) {
   return {
     schemaVersion: 1,
@@ -248,16 +337,6 @@ function block(outcome, code, message, evidence = {}) {
 async function captureState(worktree, env, gitExecutable) {
   const headResult = await git(worktree, ["rev-parse", "HEAD"], env, gitExecutable);
   if (headResult.exitCode !== 0) throw new Error(`Could not read HEAD: ${commandFailure(headResult)}`);
-  const statusResult = await git(worktree, [
-    "-c", "core.fileMode=true",
-    "status", "--porcelain=v1", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
-  ], env, gitExecutable);
-  if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
-  const completeStatus = statusResult.stdout;
-  const status = completeStatus
-    .split(/(?<=\n)/)
-    .filter((line) => !line.startsWith("!! "))
-    .join("");
   const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env, gitExecutable);
   if (indexResult.exitCode !== 0) throw new Error(`Could not inspect index flags: ${commandFailure(indexResult)}`);
   const hiddenIndexEntries = indexResult.stdout
@@ -266,16 +345,30 @@ async function captureState(worktree, env, gitExecutable) {
     .sort();
   const stagedResult = await git(worktree, ["ls-files", "--stage", "-z"], env, gitExecutable);
   if (stagedResult.exitCode !== 0) throw new Error(`Could not inspect tracked files: ${commandFailure(stagedResult)}`);
-  const trackedFingerprint = createHash("sha256");
-  const trackedMismatches = [];
-  for (const entry of stagedResult.stdout.split("\0").filter(Boolean)) {
+  const trackedEntries = stagedResult.stdout.split("\0").filter(Boolean).map((entry) => {
     const separator = entry.indexOf("\t");
     const metadata = separator === -1 ? [] : entry.slice(0, separator).split(" ");
     if (metadata.length !== 3 || !/^\d+$/.test(metadata[0]) || !/^[0-9a-f]+$/.test(metadata[1])) {
       throw new Error("Git returned an invalid tracked file entry.");
     }
     const [expectedMode, expectedOid, stage] = metadata;
-    const relativePath = entry.slice(separator + 1);
+    return { expectedMode, expectedOid, stage, relativePath: entry.slice(separator + 1) };
+  });
+  const attributesByPath = await attributesForPaths(
+    worktree,
+    trackedEntries.map((entry) => entry.relativePath),
+    env,
+    gitExecutable,
+  );
+  const autocrlfResult = await git(worktree, ["config", "--get", "core.autocrlf"], env, gitExecutable);
+  if (![0, 1].includes(autocrlfResult.exitCode)) {
+    throw new Error(`Could not inspect Git line-ending configuration: ${commandFailure(autocrlfResult)}`);
+  }
+  const autocrlf = autocrlfResult.stdout.trim().toLowerCase();
+  const trackedFingerprint = createHash("sha256");
+  const trackedMismatches = [];
+  const safelyCanonicalizedPaths = new Set();
+  for (const { expectedMode, expectedOid, stage, relativePath } of trackedEntries) {
     let actualMode = "missing";
     let filesystemMode = null;
     let canonicalOid = null;
@@ -317,8 +410,29 @@ async function captureState(worktree, env, gitExecutable) {
         if (hashResult.exitCode !== 0) throw new Error(commandFailure(hashResult));
         canonicalOid = hashResult.stdout.trim();
         const hash = createHash("sha256");
-        for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
+        let sampledBytes = 0;
+        let containsNul = false;
+        for await (const chunk of createReadStream(absolutePath)) {
+          hash.update(chunk);
+          if (sampledBytes < 8000) {
+            const sample = chunk.subarray(0, 8000 - sampledBytes);
+            containsNul ||= sample.includes(0);
+            sampledBytes += sample.length;
+          }
+        }
         worktreeDigest = hash.digest("hex");
+        if (canonicalOid !== expectedOid) {
+          const attributes = attributesByPath.get(relativePath);
+          if (attributes.filter === "lfs"
+              && await matchesLfsPointer(worktree, expectedOid, worktreeDigest, stats.size, env, gitExecutable)) {
+            canonicalOid = expectedOid;
+          } else if (["unspecified", "unset"].includes(attributes.filter)
+              && usesBuiltInTextNormalization(attributes, autocrlf, containsNul)) {
+            const normalizedOid = await crlfNormalizedBlobOid(absolutePath, expectedOid);
+            if (normalizedOid === expectedOid) canonicalOid = normalizedOid;
+          }
+          if (canonicalOid === expectedOid) safelyCanonicalizedPaths.add(relativePath);
+        }
       }
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -338,6 +452,36 @@ async function captureState(worktree, env, gitExecutable) {
       trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
     }
   }
+  const filterOverrides = [];
+  const filterDrivers = [...new Set(
+    [...attributesByPath.values()]
+      .map((attributes) => attributes.filter)
+      .filter((value) => !["unspecified", "unset"].includes(value)),
+  )].sort();
+  for (const driver of filterDrivers) {
+    filterOverrides.push(
+      "-c", `filter.${driver}.process=`,
+      "-c", `filter.${driver}.clean=`,
+      "-c", `filter.${driver}.required=false`,
+    );
+  }
+  const statusResult = await git(worktree, [
+    ...filterOverrides,
+    "-c", "core.fileMode=true",
+    "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
+  ], env, gitExecutable);
+  if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
+  const completeStatus = statusResult.stdout
+    .split("\0")
+    .filter((record) => record
+      && !(record.startsWith(" M ") && safelyCanonicalizedPaths.has(record.slice(3))))
+    .map((record) => `${record}\0`)
+    .join("");
+  const status = completeStatus
+    .split("\0")
+    .filter((record) => record && !record.startsWith("!! "))
+    .map((record) => `${record}\0`)
+    .join("");
   const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env, gitExecutable);
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
   const ignoredFiles = [];
