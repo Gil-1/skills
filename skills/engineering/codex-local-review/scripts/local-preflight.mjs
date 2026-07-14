@@ -426,15 +426,11 @@ async function captureState(worktree, env, gitExecutable) {
   const trackedFingerprint = createHash("sha256");
   const trackedMismatches = [];
   const safelySmudgedLfsPaths = new Set();
-  const externallyFilteredPaths = new Set();
   for (const { expectedMode, expectedOid, stage, relativePath } of trackedEntries) {
     const attributes = attributesByPath.get(relativePath);
     const contentComparable = ["unspecified", "unset"].includes(attributes["working-tree-encoding"])
       && ["unspecified", "unset"].includes(attributes.ident)
       && ["unspecified", "unset", "lfs"].includes(attributes.filter);
-    if (!["unspecified", "unset", "lfs"].includes(attributes.filter)) {
-      externallyFilteredPaths.add(relativePath);
-    }
     let actualMode = "missing";
     let filesystemMode = null;
     let canonicalOid = null;
@@ -519,21 +515,11 @@ async function captureState(worktree, env, gitExecutable) {
       trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
     }
   }
-  const filterOverrides = [];
-  const filterDrivers = [...new Set(
-    [...attributesByPath.values()]
-      .map((attributes) => attributes.filter)
-      .filter((value) => !["unspecified", "unset"].includes(value)),
-  )].sort();
-  for (const driver of filterDrivers) {
-    filterOverrides.push(
-      "-c", `filter.${driver}.process=`,
-      "-c", `filter.${driver}.clean=`,
-      "-c", `filter.${driver}.required=false`,
-    );
-  }
+  const lfsFilterOverrides = [...attributesByPath.values()].some((attributes) => attributes.filter === "lfs")
+    ? ["-c", "filter.lfs.process=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"]
+    : [];
   const statusResult = await git(worktree, [
-    ...filterOverrides,
+    ...lfsFilterOverrides,
     "-c", "core.fileMode=true",
     "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
   ], env, gitExecutable, { stdoutEncoding: null });
@@ -542,8 +528,7 @@ async function captureState(worktree, env, gitExecutable) {
   const completeStatus = statusOutput
     .split("\0")
     .filter((record) => record
-      && !(record.startsWith(" M ")
-        && (safelySmudgedLfsPaths.has(record.slice(3)) || externallyFilteredPaths.has(record.slice(3)))))
+      && !(record.startsWith(" M ") && safelySmudgedLfsPaths.has(record.slice(3))))
     .map((record) => `${record}\0`)
     .join("");
   const status = completeStatus

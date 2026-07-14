@@ -205,9 +205,6 @@ if (mode === "mutate-tracked-with-restored-mtime") {
   writeFileSync(file, (contents[0] === "X" ? "Y" : "X") + contents.slice(1));
   utimesSync(file, before.atime, before.mtime);
 }
-if (mode === "mutate-custom-filtered") {
-  writeFileSync(new URL("custom.txt", "file://" + worktree + "/"), "mutation\\n");
-}
 if (mode === "mutate-submodule") {
   writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
 }
@@ -776,7 +773,7 @@ process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\
   });
 });
 
-test("allows Git-clean custom-filter attributes without invoking their clean command", {
+test("allows Git-clean custom-filter attributes and blocks dirty ones", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -807,15 +804,13 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
     assert.equal(outcome.readOnly.verified, true);
     assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
     assert.equal(await invocationCount(fake.log), 1);
-    await assert.rejects(readFile(log), { code: "ENOENT" });
 
+    await writeFile(path.join(fixture.repo, "custom.txt"), "dirty worktree form\n");
     await rm(fake.bin, { recursive: true });
-    const mutation = await invokeRunner(fixture, { mode: "mutate-custom-filtered" });
-    assert.equal(mutation.processResult.exitCode, 1);
-    assert.equal(mutation.outcome.blocker.code, "repository_mutated");
-    assert.equal(mutation.outcome.readOnly.statusUnchanged, true);
-    assert.equal(mutation.outcome.readOnly.trackedFilesUnchanged, false);
-    await assert.rejects(readFile(log), { code: "ENOENT" });
+    const dirty = await invokeRunner(fixture);
+    assert.equal(dirty.processResult.exitCode, 1);
+    assert.equal(dirty.outcome.blocker.code, "dirty_worktree");
+    assert.equal(await invocationCount(fake.log), 1);
   });
 });
 
