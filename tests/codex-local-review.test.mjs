@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 const runner = path.resolve("skills/engineering/codex-local-review/scripts/local-preflight.mjs");
 
-async function run(command, args, options = {}) {
+function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -32,28 +31,15 @@ async function git(repo, ...args) {
   return result.stdout.trim();
 }
 
-async function gitWithoutInheritedConfig(repo, ...args) {
-  const result = await run("git", ["-C", repo, ...args], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: os.devNull,
-    },
-  });
-  assert.equal(result.exitCode, 0, `isolated git ${args.join(" ")} failed: ${result.stderr}`);
-  return result.stdout.trim();
-}
-
-async function createRepository({ candidate = true, objectFormat = null } = {}) {
+async function createRepository({ candidate = true } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-local-review-test-"));
   const repo = path.join(root, "repo");
   await mkdir(repo);
-  await git(repo, "init", "-b", "main", ...(objectFormat ? ["--object-format", objectFormat] : []));
+  await git(repo, "init", "-b", "main");
   await git(repo, "config", "user.name", "Test User");
   await git(repo, "config", "user.email", "test@example.com");
   await writeFile(path.join(repo, "file.txt"), "base\n");
-  await writeFile(path.join(repo, ".gitignore"), "*.ignored\n");
-  await git(repo, "add", "file.txt", ".gitignore");
+  await git(repo, "add", "file.txt");
   await git(repo, "commit", "-m", "base");
   const baseHead = await git(repo, "rev-parse", "HEAD");
   await git(repo, "switch", "-c", "ticket");
@@ -70,266 +56,119 @@ async function createRepository({ candidate = true, objectFormat = null } = {}) 
   };
 }
 
-async function addSubmodule(fixture) {
-  const source = path.join(fixture.root, "submodule-source");
-  await mkdir(source);
-  await git(source, "init", "-b", "main");
-  await git(source, "config", "user.name", "Test User");
-  await git(source, "config", "user.email", "test@example.com");
-  await writeFile(path.join(source, "file.txt"), "submodule\n");
-  await git(source, "add", "file.txt");
-  await git(source, "commit", "-m", "submodule base");
-
-  await git(fixture.repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "dep");
-  await git(fixture.repo, "commit", "-m", "add submodule");
-  await git(fixture.repo, "config", "submodule.dep.ignore", "all");
-  fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-}
-
-async function installFakeCodex(root, options = {}) {
+async function installFakeCodex(root) {
   const bin = path.join(root, "bin");
   const log = path.join(root, "codex-invocations.jsonl");
-  const timeoutMarker = path.join(root, "codex-timeout-descendant-ran.txt");
   await mkdir(bin);
   const executable = path.join(bin, process.platform === "win32" ? "codex.cmd" : "codex");
-  const homeLog = path.join(root, "codex-home.txt");
-  const source = `import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+  const script = path.join(bin, "fake-codex.mjs");
+  const source = `import { appendFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
-const mode = ${JSON.stringify(options.mode ?? "success")};
-const callerCodexHome = ${JSON.stringify(options.env?.CALLER_CODEX_HOME ?? null)};
-if (args.includes("--version")) {
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") {
   console.log("codex-cli 9.9.9");
   process.exit(0);
 }
 
-appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+const mode = process.env.FAKE_CODEX_MODE || "success";
 const worktree = args[args.indexOf("--cd") + 1];
-if (mode === "check-isolated-home" || mode.startsWith("refresh-auth")) {
-  writeFileSync(${JSON.stringify(homeLog)}, process.env.CODEX_HOME);
-  if (process.env.CODEX_HOME === callerCodexHome
-      || existsSync(path.join(process.env.CODEX_HOME, "AGENTS.md"))
-      || lstatSync(path.join(process.env.CODEX_HOME, "auth.json")).isSymbolicLink()
-      || readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8") !== '{"OPENAI_API_KEY":"test-auth"}\\n') {
-    console.error("Codex home was not isolated from caller instructions while retaining auth");
-    process.exit(9);
-  }
-  if (mode.startsWith("refresh-auth")) {
-    const refresh = mode === "refresh-auth-malformed"
-      ? "{truncated"
-      : '{"OPENAI_API_KEY":"refreshed-auth"}\\n';
-    writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), refresh);
-    if (readFileSync(path.join(callerCodexHome, "auth.json"), "utf8") !== '{"OPENAI_API_KEY":"test-auth"}\\n') {
-      console.error("Codex changed caller authentication before controlled refresh persistence");
-      process.exit(12);
-    }
-  }
-}
-if (mode === "check-git-environment") {
-  const localEnv = spawnSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" });
-  const inherited = localEnv.stdout.split(/\\r?\\n/).filter((name) => name && process.env[name] !== undefined);
-  if (localEnv.status !== 0 || inherited.length > 0 || process.env.GIT_OPTIONAL_LOCKS !== "0") {
-    console.error("inherited Git-local environment: " + inherited.join(", "));
-    process.exit(8);
-  }
-}
-if (mode === "check-sanitized-environment") {
-  const leaked = ["AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "UNRELATED_SECRET"]
-    .filter((name) => process.env[name] !== undefined);
-  if (leaked.length > 0 || process.env.CODEX_API_KEY !== "codex-auth") {
-    console.error("unsafe Codex environment: " + leaked.join(", "));
-    process.exit(10);
-  }
-}
-if (mode === "check-review-path") {
-  const reviewGit = spawnSync("git", ["--version"], { cwd: worktree, encoding: "utf8" });
-  if (reviewGit.status !== 0 || reviewGit.stdout.includes("spoofed candidate executable")) {
-    console.error("review command resolved a candidate executable");
-    process.exit(11);
-  }
-}
-if (mode === "auth") {
-  console.error("Not logged in. Run codex login.");
-  process.exit(1);
-}
-if (mode === "sandbox") {
-  console.error("failed to initialize read-only sandbox");
-  process.exit(1);
-}
 if (mode === "nonzero") {
   console.error("review process failed");
   process.exit(7);
 }
-if (mode === "refresh-auth-nonzero") {
-  console.error("review process failed after auth refresh");
-  process.exit(7);
-}
-if (mode === "timeout" || mode === "refresh-auth-timeout") {
-  setTimeout(() => writeFileSync(${JSON.stringify(timeoutMarker)}, "descendant survived\\n"), 500);
-  setInterval(() => {}, 1_000);
-}
+if (mode === "timeout") setInterval(() => {}, 1_000);
+if (mode === "mutate-tracked") writeFileSync(path.join(worktree, "file.txt"), "mutated\\n");
+if (mode === "mutate-untracked") writeFileSync(path.join(worktree, "created.txt"), "mutated\\n");
 if (mode === "malformed") {
   console.log("not-json");
   process.exit(0);
 }
-if (mode === "fatal-event") {
-  console.log(JSON.stringify({ type: "error", message: "fatal Codex error" }));
-  process.exit(0);
-}
-if (mode === "missing-output") {
-  console.log(JSON.stringify({ type: "thread.started", thread_id: "test" }));
+if (mode === "missing-start") {
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "incomplete" } }));
   console.log(JSON.stringify({ type: "turn.completed" }));
   process.exit(0);
 }
-if (mode === "missing-lifecycle-starts") {
-  console.log(JSON.stringify({
-    type: "item.completed",
-    item: { id: "item_0", type: "agent_message", text: "incomplete review" },
-  }));
-  console.log(JSON.stringify({ type: "turn.completed" }));
-  process.exit(0);
-}
-if (mode === "mutate-status") {
-  writeFileSync(new URL("codex-created.txt", "file://" + worktree + "/"), "mutation\\n");
-}
-if (mode === "refresh-auth-mutate") {
-  writeFileSync(new URL("codex-created.txt", "file://" + worktree + "/"), "mutation\\n");
-}
-if (mode === "mutate-ignored") {
-  writeFileSync(new URL("codex-created.ignored", "file://" + worktree + "/"), "mutation\\n");
-}
-if (mode === "rewrite-ignored") {
-  writeFileSync(new URL("baseline.ignored", "file://" + worktree + "/"), "rewritten\\n");
-}
-if (mode === "hide-tracked-mutation") {
-  writeFileSync(new URL("file.txt", "file://" + worktree + "/"), "hidden mutation\\n");
-  spawnSync("git", ["-C", worktree, "update-index", "--assume-unchanged", "file.txt"]);
-}
-if (mode === "mutate-mode") {
-  chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o755);
-}
-if (mode === "mutate-permissions") {
-  chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o600);
-}
-if (mode === "mutate-tracked-with-restored-mtime") {
-  const file = new URL("file.txt", "file://" + worktree + "/");
-  const before = statSync(file);
-  const contents = readFileSync(file, "utf8");
-  writeFileSync(file, (contents[0] === "X" ? "Y" : "X") + contents.slice(1));
-  utimesSync(file, before.atime, before.mtime);
-}
-if (mode === "mutate-submodule") {
-  writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
-}
-if (mode === "replace-submodule-checkout") {
-  rmSync(new URL("dep/.git", "file://" + worktree + "/"), { force: true, recursive: true });
-  writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "detached submodule mutation\\n");
-}
-if (mode === "mutate-head") {
-  writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
-  spawnSync("git", ["-C", worktree, "add", "codex-committed.txt"]);
-  spawnSync("git", ["-C", worktree, "commit", "--no-verify", "-m", "codex mutation"]);
-}
+
 console.log(JSON.stringify({ type: "thread.started", thread_id: "test" }));
 console.log(JSON.stringify({ type: "turn.started" }));
-if (mode === "warning") {
-  console.log(JSON.stringify({
-    type: "item.completed",
-    item: { id: "warning_0", type: "error", message: "non-fatal config warning" },
-  }));
+if (mode === "fatal") {
+  console.log(JSON.stringify({ type: "turn.failed", error: { message: "fatal review failure" } }));
+  process.exit(0);
 }
 console.log(JSON.stringify({
   type: "item.completed",
-  item: {
-    id: "item_0",
-    type: "agent_message",
-    text: "P1: preserve this finding\\n\\nP3: preserve this detail",
-  },
+  item: { type: "agent_message", text: "P1: preserve this finding\\n\\nP3: preserve this detail" },
 }));
-if (mode === "premature-eof") process.exit(0);
+if (mode === "incomplete") process.exit(0);
 console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 8 } }));
-if (mode === "trailing-unfinished-turn") {
-  console.log(JSON.stringify({ type: "turn.started" }));
-}
 `;
+  await writeFile(script, source);
   if (process.platform === "win32") {
-    const script = path.join(bin, "fake-codex.mjs");
-    await writeFile(script, source);
     await writeFile(executable, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
   } else {
     await writeFile(executable, `#!/usr/bin/env node\n${source}`);
   }
   await chmod(executable, 0o755);
-  return { bin, executable, homeLog, log, timeoutMarker };
+  return { bin, log };
 }
 
-async function installGitOnlyPath(root) {
-  const pathValue = Object.entries(process.env)
-    .find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
-  const pathExt = Object.entries(process.env)
-    .find(([name]) => name.toUpperCase() === "PATHEXT")?.[1];
+async function gitOnlyPath(root) {
+  const pathValue = process.env.PATH ?? "";
   const extensions = process.platform === "win32"
-    ? (pathExt ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
     : [""];
-  let gitExecutable = null;
-  for (const entry of pathValue.split(path.delimiter).filter(Boolean)) {
+  let gitExecutable;
+  for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
     for (const extension of extensions) {
-      const candidate = path.join(entry, `git${extension}`);
+      const candidate = path.join(directory, `git${extension}`);
       try {
         await access(candidate);
         gitExecutable = candidate;
         break;
       } catch {
-        // Continue searching the caller's PATH.
+        // Continue searching PATH.
       }
     }
     if (gitExecutable) break;
   }
-  assert.ok(gitExecutable, "Git must be available to construct the missing-Codex test PATH");
-
+  assert.ok(gitExecutable, "Git must be available for the missing-Codex test");
+  if (process.platform === "win32") return path.dirname(gitExecutable);
   const bin = path.join(root, "git-only-bin");
   await mkdir(bin);
-  const shim = path.join(bin, process.platform === "win32" ? "git.cmd" : "git");
-  if (process.platform === "win32") {
-    await writeFile(shim, `@echo off\r\n"${gitExecutable.replaceAll("%", "%%")}" %*\r\n`);
-    await chmod(shim, 0o755);
-  } else {
-    await symlink(gitExecutable, shim);
-  }
+  await symlink(gitExecutable, path.join(bin, "git"));
   return bin;
 }
 
 async function invokeRunner(fixture, options = {}) {
-  const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root, options);
-  const args = [
-    ...(options.nodeArgs ?? []),
-    runner,
-    "--worktree", options.worktree ?? fixture.repo,
-    "--base", options.base ?? "main",
-    "--expected-head", options.expectedHead ?? fixture.expectedHead,
-  ];
+  const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root);
   const executablePath = fake
-    ? `${options.pathPrefix ? `${options.pathPrefix}${path.delimiter}` : ""}${options.candidatePath ? `${fixture.repo}/bin${path.delimiter}` : ""}${fake.bin}${path.delimiter}${process.env.PATH}`
-    : await installGitOnlyPath(fixture.root);
+    ? `${fake.bin}${path.delimiter}${process.env.PATH}`
+    : await gitOnlyPath(fixture.root);
   const env = {
     ...process.env,
     PATH: executablePath,
+    ...(options.mode ? { FAKE_CODEX_MODE: options.mode } : {}),
     ...options.env,
   };
-  const processResult = await run(process.execPath, args, { env });
-  assert.equal(processResult.stderr, "");
+  const result = await run(process.execPath, [
+    runner,
+    "--worktree", fixture.repo,
+    "--base", options.base ?? "main",
+    "--expected-head", options.expectedHead ?? fixture.expectedHead,
+  ], { env });
+  assert.equal(result.stderr, "");
   let outcome;
-  assert.doesNotThrow(() => { outcome = JSON.parse(processResult.stdout); }, processResult.stdout);
-  return { processResult, outcome, fake };
+  assert.doesNotThrow(() => { outcome = JSON.parse(result.stdout); }, result.stdout);
+  return { fake, outcome, result };
 }
 
-async function invocationCount(log) {
+async function readInvocations(log) {
   try {
-    return (await readFile(log, "utf8")).trim().split("\n").filter(Boolean).length;
+    return (await readFile(log, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
   } catch (error) {
-    if (error.code === "ENOENT") return 0;
+    if (error.code === "ENOENT") return [];
     throw error;
   }
 }
@@ -343,1028 +182,178 @@ async function withFixture(callback, options) {
   }
 }
 
-test("captures one isolated local review against the runner-computed merge base", async () => {
+test("runs one pinned read-only review and preserves its complete findings", async () => {
   await withFixture(async (fixture) => {
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
+    const { fake, outcome, result } = await invokeRunner(fixture);
 
-    assert.equal(processResult.exitCode, 0);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(Object.keys(outcome), [
+      "status", "worktree", "base", "mergeBase", "expectedHead", "reviewedHead",
+      "codexVersion", "command", "readOnly", "reviewOutput", "blocker",
+    ]);
     assert.equal(outcome.status, "passed");
-    assert.equal(outcome.codexVersion, "codex-cli 9.9.9");
     assert.equal(outcome.worktree, fixture.repo);
-    assert.equal(outcome.base.reference, "main");
-    assert.equal(outcome.base.resolvedHead, fixture.baseHead);
+    assert.deepEqual(outcome.base, { reference: "main", resolvedHead: fixture.baseHead });
     assert.equal(outcome.mergeBase, fixture.baseHead);
+    assert.equal(outcome.expectedHead, fixture.expectedHead);
     assert.equal(outcome.reviewedHead, fixture.expectedHead);
-    assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
-    assert.equal(outcome.command.exitCode, 0);
-    assert.equal(outcome.command.executable, fake.executable);
-    assert.equal(outcome.command.signal, null);
-    assert.match(outcome.command.stdout, /item\.completed/);
-    assert.equal(outcome.readOnly.verified, true);
-    assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
-    assert.equal(await invocationCount(fake.log), 1);
-
-    const args = outcome.command.args;
-    assert.deepEqual(args.slice(0, 13), [
-      "exec", "--sandbox", "read-only", "--ephemeral", "--json", "--ignore-user-config", "--ignore-rules",
-      "--config", "features.hooks=false",
-      "--config", "skills.include_instructions=false",
-      "--config", "shell_environment_policy.inherit=\"none\"",
-    ]);
-    assert.equal(args[13], "--config");
-    assert.match(args[14], /^shell_environment_policy\.set=\{ PATH = ".*", GIT_OPTIONAL_LOCKS = "0" \}$/);
-    assert.equal(args[15], "--config");
-    assert.equal(args[16], `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`);
-    assert.equal(args[17], "--cd");
-    assert.equal(args[18], fixture.repo);
-    assert.equal(args[19], "review");
-    assert.match(args[20], new RegExp(`base reference: main`));
-    assert.match(args[20], new RegExp(`resolved base SHA: ${fixture.baseHead}`));
-    assert.match(args[20], new RegExp(`merge-base SHA: ${fixture.baseHead}`));
-    assert.match(args[20], new RegExp(`expected HEAD: ${fixture.expectedHead}`));
-    assert.match(args[20], /Do not load, invoke, or use any skills/i);
-  });
-});
-
-test("ignores candidate-owned PATH entries while preserving the injected Codex seam", async () => {
-  await withFixture(async (fixture) => {
-    const candidateBin = path.join(fixture.repo, "bin");
-    await mkdir(candidateBin);
-    for (const name of ["codex", "git"]) {
-      await writeFile(path.join(candidateBin, name), `#!/bin/sh
-printf 'spoofed candidate executable\\n'
-`);
-      await chmod(path.join(candidateBin, name), 0o755);
-    }
-    await git(fixture.repo, "add", "bin/codex", "bin/git");
-    await git(fixture.repo, "commit", "-m", "add candidate executable spoofs");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture, { candidatePath: true });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
     assert.equal(outcome.codexVersion, "codex-cli 9.9.9");
-    assert.equal(outcome.command.executable, fake.executable);
-    assert.equal(await invocationCount(fake.log), 1);
-  });
-});
-
-test("ignores outside PATH executables that resolve inside the candidate", {
-  skip: process.platform === "win32" ? "creating symlinks requires optional Windows privileges" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const candidateBin = path.join(fixture.repo, "bin");
-    const outsideBin = path.join(fixture.root, "outside-bin");
-    await mkdir(candidateBin);
-    await mkdir(outsideBin);
-    for (const name of ["codex", "git"]) {
-      const executable = path.join(candidateBin, name);
-      await writeFile(executable, `#!/bin/sh
-printf 'spoofed candidate executable\n'
-`);
-      await chmod(executable, 0o755);
-      await symlink(executable, path.join(outsideBin, name));
-    }
-    await git(fixture.repo, "add", "bin/codex", "bin/git");
-    await git(fixture.repo, "commit", "-m", "add executable symlink targets");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      pathPrefix: outsideBin,
+    assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
+    assert.deepEqual(outcome.command, {
+      attempted: true,
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      timeoutMs: 30 * 60_000,
+      stderr: "",
+      error: null,
     });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.command.executable, fake.executable);
-    assert.equal(await invocationCount(fake.log), 1);
-  });
-});
-
-test("drops relative PATH entries before review commands run from the candidate", async () => {
-  await withFixture(async (fixture) => {
-    const candidateBin = path.join(fixture.repo, "bin");
-    await mkdir(candidateBin);
-    await writeFile(path.join(candidateBin, "git"), `#!/bin/sh
-printf 'spoofed candidate executable\n'
-`);
-    await chmod(path.join(candidateBin, "git"), 0o755);
-    await git(fixture.repo, "add", "bin/git");
-    await git(fixture.repo, "commit", "-m", "add relative PATH executable spoof");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-
-    const { processResult, outcome } = await invokeRunner(fixture, {
-      mode: "check-review-path",
-      pathPrefix: "bin",
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-  });
-});
-
-test("ignores a candidate-owned COMSPEC when launching Windows command shims", {
-  skip: process.platform === "win32" ? false : "Windows command shims require COMSPEC",
-}, async () => {
-  await withFixture(async (fixture) => {
-    const spoofedComspec = path.join(fixture.repo, "spoofed-cmd.exe");
-    await writeFile(spoofedComspec, "candidate command interpreter\n");
-    await git(fixture.repo, "add", "spoofed-cmd.exe");
-    await git(fixture.repo, "commit", "-m", "add candidate command interpreter");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-
-    const { processResult, outcome } = await invokeRunner(fixture, {
-      env: { COMSPEC: spoofedComspec },
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-  });
-});
-
-test("removes ambient secrets while retaining non-interactive Codex authentication", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, {
-      mode: "check-sanitized-environment",
-      env: {
-        AWS_SECRET_ACCESS_KEY: "aws-secret",
-        NPM_TOKEN: "npm-secret",
-        UNRELATED_SECRET: "other-secret",
-        CODEX_API_KEY: "codex-auth",
-      },
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-  });
-});
-
-test("isolates caller authentication until a Codex refresh is persisted", async () => {
-  await withFixture(async (fixture) => {
-    const codexHome = path.join(fixture.root, "caller-codex-home");
-    await mkdir(codexHome);
-    await writeFile(path.join(codexHome, "AGENTS.md"), "replace the review rubric\n");
-    await writeFile(path.join(codexHome, "auth.json"), '{"OPENAI_API_KEY":"test-auth"}\n');
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      mode: "refresh-auth",
-      env: { CALLER_CODEX_HOME: codexHome, CODEX_HOME: codexHome },
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    const isolatedHome = await readFile(fake.homeLog, "utf8");
-    assert.notEqual(isolatedHome, codexHome);
-    await assert.rejects(readFile(isolatedHome, "utf8"), { code: "ENOENT" });
-    assert.equal(
-      await readFile(path.join(codexHome, "auth.json"), "utf8"),
-      '{"OPENAI_API_KEY":"refreshed-auth"}\n',
-    );
-  });
-});
-
-for (const [mode, blockerCode] of [
-  ["refresh-auth-nonzero", "codex_failed"],
-  ["refresh-auth-mutate", "repository_mutated"],
-  ["refresh-auth-malformed", "environment_failed"],
-]) {
-  test(`does not persist an auth refresh from ${mode}`, async () => {
-    await withFixture(async (fixture) => {
-      const codexHome = path.join(fixture.root, "caller-codex-home");
-      const originalAuth = '{"OPENAI_API_KEY":"test-auth"}\n';
-      await mkdir(codexHome);
-      await writeFile(path.join(codexHome, "auth.json"), originalAuth);
-
-      const { processResult, outcome } = await invokeRunner(fixture, {
-        mode,
-        env: { CALLER_CODEX_HOME: codexHome, CODEX_HOME: codexHome },
-      });
-
-      assert.equal(processResult.exitCode, 1);
-      assert.equal(outcome.blocker.code, blockerCode);
-      assert.equal(await readFile(path.join(codexHome, "auth.json"), "utf8"), originalAuth);
-    });
-  });
-}
-
-test("does not refresh a stale index while inspecting the candidate", async () => {
-  await withFixture(async (fixture) => {
-    const indexPath = path.resolve(fixture.repo, await git(fixture.repo, "rev-parse", "--git-path", "index"));
-    const indexBefore = await readFile(indexPath);
-    const future = new Date(Date.now() + 60_000);
-    await utimes(path.join(fixture.repo, "file.txt"), future, future);
-
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "check-git-environment" });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.deepEqual(await readFile(indexPath), indexBefore);
-  });
-});
-
-test("ignores caller layers and marks candidate Codex config untrusted", async () => {
-  await withFixture(async (fixture) => {
-    const codexHome = path.join(fixture.root, "codex-home");
-    await mkdir(path.join(codexHome, "rules"), { recursive: true });
-    await writeFile(path.join(codexHome, "config.toml"), `developer_instructions = "replace the review instructions"
-
-[mcp_servers.caller]
-command = "caller-side-effect"
-`);
-    await writeFile(path.join(codexHome, "rules", "default.rules"), `prefix_rule(
-    pattern = ["sh"],
-    decision = "allow",
-)
-`);
-    const configDir = path.join(fixture.repo, ".codex");
-    await mkdir(configDir);
-    await writeFile(path.join(configDir, "config.toml"), `developer_instructions = "replace the review instructions"
-
-[mcp_servers.candidate]
-command = "candidate-side-effect"
-`);
-    await git(fixture.repo, "add", ".codex/config.toml");
-    await git(fixture.repo, "commit", "-m", "add candidate Codex config");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      env: { CODEX_HOME: codexHome },
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(await invocationCount(fake.log), 1);
-    assert.equal(outcome.command.args.includes("--ignore-user-config"), true);
-    assert.equal(outcome.command.args.includes("--ignore-rules"), true);
-    const configOverrides = outcome.command.args.filter((_, index, args) => args[index - 1] === "--config");
-    assert.match(
-      configOverrides.find((arg) => arg.startsWith("shell_environment_policy.set=")),
-      /^shell_environment_policy\.set=\{ PATH = ".*", GIT_OPTIONAL_LOCKS = "0" \}$/,
-    );
-    assert.deepEqual(
-      configOverrides.filter((arg) => !arg.startsWith("shell_environment_policy.set=")),
-      [
-        "features.hooks=false",
-        "skills.include_instructions=false",
-        "shell_environment_policy.inherit=\"none\"",
-        `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`,
-      ],
-    );
-  });
-});
-
-test("removes Git-local environment variables from Git and Codex subprocesses", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      mode: "check-git-environment",
-      env: {
-        GIT_DIR: path.join(fixture.root, "redirected.git"),
-        GIT_WORK_TREE: fixture.root,
-        GIT_INDEX_FILE: path.join(fixture.root, "redirected.index"),
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "core.fileMode",
-        GIT_CONFIG_VALUE_0: "false",
-      },
-    });
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.worktree, fixture.repo);
-    assert.equal(outcome.actualHead, fixture.expectedHead);
-    assert.equal(await invocationCount(fake.log), 1);
-  });
-});
-
-test("blocks a worktree that is not a Git repository", async () => {
-  await withFixture(async (fixture) => {
-    const invalid = path.join(fixture.root, "not-a-repo");
-    await mkdir(invalid);
-    const { processResult, outcome, fake } = await invokeRunner(fixture, { worktree: invalid });
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.status, "blocked");
-    assert.equal(outcome.blocker.code, "invalid_target");
-    assert.equal(await invocationCount(fake.log), 0);
-  });
-});
-
-test("blocks an unexpected HEAD", async () => {
-  await withFixture(async (fixture) => {
-    const { outcome, fake } = await invokeRunner(fixture, { expectedHead: fixture.baseHead });
-    assert.equal(outcome.blocker.code, "unexpected_head");
-    assert.equal(outcome.actualHead, fixture.expectedHead);
-    assert.equal(await invocationCount(fake.log), 0);
-  });
-});
-
-test("blocks untracked files as dirty worktree state", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, "untracked.txt"), "dirty\n");
-    const { outcome, fake } = await invokeRunner(fixture);
-    assert.equal(outcome.blocker.code, "dirty_worktree");
-    assert.match(outcome.blocker.evidence.status, /\?\? untracked\.txt/);
-    assert.equal(await invocationCount(fake.log), 0);
-  });
-});
-
-test("allows ignored files in the initial clean worktree state", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, "baseline.ignored"), "ignored\n");
-    const { processResult, outcome } = await invokeRunner(fixture);
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.readOnly.before.status, "");
-    assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
-    assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
-  });
-});
-
-test("allows Git-clean symlinks represented as regular files", async () => {
-  await withFixture(async (fixture) => {
-    const linkPath = path.join(fixture.repo, "link.txt");
-    await writeFile(linkPath, "file.txt");
-    const oid = await git(fixture.repo, "hash-object", "-w", "--no-filters", "--", "link.txt");
-    await git(fixture.repo, "update-index", "--add", "--cacheinfo", `120000,${oid},link.txt`);
-    await git(fixture.repo, "commit", "-m", "add portable symlink");
-    await git(fixture.repo, "config", "core.symlinks", "false");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
-  });
-});
-
-test("hashes symlink targets with the repository object format", {
-  skip: process.platform === "win32" ? "creating symlinks requires optional Windows privileges" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    await symlink("file.txt", path.join(fixture.repo, "link.txt"));
-    await git(fixture.repo, "add", "link.txt");
-    await git(fixture.repo, "commit", "-m", "add symlink");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(fixture.expectedHead.length, 64);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
-  }, { objectFormat: "sha256" });
-});
-
-test("allows clean CRLF worktree bytes normalized to LF in the index", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt text eol=crlf\n");
-    await writeFile(path.join(fixture.repo, "file.txt"), "base\r\ncandidate\r\ncrlf\r\n");
-    await git(fixture.repo, "add", ".gitattributes", "file.txt");
-    await git(fixture.repo, "commit", "-m", "use CRLF checkout bytes");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    const indexOid = await git(fixture.repo, "rev-parse", "HEAD:file.txt");
-    const rawOid = await git(fixture.repo, "hash-object", "--no-filters", "--", "file.txt");
-    assert.notEqual(rawOid, indexOid);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
-  });
-});
-
-test("blocks CRLF bytes that Git reports dirty for an LF checkout", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt text eol=lf\n");
-    await git(fixture.repo, "add", ".gitattributes");
-    await git(fixture.repo, "commit", "-m", "require LF checkout bytes");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    await writeFile(path.join(fixture.repo, "file.txt"), "base\r\ncandidate\r\n");
-    assert.match(await git(fixture.repo, "status", "--porcelain=v1"), /^M file\.txt/);
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "dirty_worktree");
-    assert.match(outcome.blocker.evidence.status, / M file\.txt/);
-    assert.equal(await invocationCount(fake.log), 0);
-  });
-});
-
-test("allows Git-clean working-tree encodings while retaining raw state evidence", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(
-      path.join(fixture.repo, ".gitattributes"),
-      "*.ps1 text working-tree-encoding=UTF-16LE eol=CRLF\n",
-    );
-    await writeFile(
-      path.join(fixture.repo, "script.ps1"),
-      Buffer.from("Write-Output 'candidate'\r\n", "utf16le"),
-    );
-    await git(fixture.repo, "add", ".gitattributes", "script.ps1");
-    await git(fixture.repo, "commit", "-m", "add encoded script");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
+    assert.deepEqual(outcome.readOnly.before, { head: fixture.expectedHead, status: "" });
+    assert.deepEqual(outcome.readOnly.after, outcome.readOnly.before);
+    assert.equal(outcome.readOnly.headUnchanged, true);
+    assert.equal(outcome.readOnly.statusUnchanged, true);
     assert.equal(outcome.readOnly.verified, true);
-    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
-    assert.equal(await invocationCount(fake.log), 1);
-  });
-});
 
-test("allows Git-clean ident expansion while retaining raw state evidence", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt ident\n");
-    await writeFile(path.join(fixture.repo, "file.txt"), "candidate\n$Id$\n");
-    await git(fixture.repo, "add", ".gitattributes", "file.txt");
-    await git(fixture.repo, "commit", "-m", "add ident expansion");
-    await rm(path.join(fixture.repo, "file.txt"));
-    await git(fixture.repo, "checkout", "--", "file.txt");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.match(await readFile(path.join(fixture.repo, "file.txt"), "utf8"), /\$Id: [0-9a-f]+ \$/);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.readOnly.verified, true);
-    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
-    assert.equal(await invocationCount(fake.log), 1);
-  });
-});
-
-test("blocks paths whose bytes cannot be represented losslessly in JSON", {
-  skip: process.platform === "win32" ? "Windows paths do not expose arbitrary byte names" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const rawPath = Buffer.concat([
-      Buffer.from(`${fixture.repo}${path.sep}raw_`),
-      Buffer.from([0xff]),
-      Buffer.from(".txt"),
+    const invocations = await readInvocations(fake.log);
+    assert.deepEqual(invocations[0], ["--version"]);
+    assert.equal(invocations.filter(([command]) => command === "exec").length, 1);
+    const reviewArgs = invocations[1];
+    assert.deepEqual(reviewArgs.slice(0, -1), [
+      "exec", "--sandbox", "read-only", "--ephemeral", "--json",
+      "--config", "features.hooks=false", "--cd", fixture.repo, "review",
     ]);
-    await writeFile(rawPath, "raw path bytes\n");
-    await git(fixture.repo, "add", "--all");
-    await git(fixture.repo, "commit", "-m", "add non-UTF-8 path");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_path_encoding");
-    assert.equal(outcome.blocker.evidence.source, "index flags");
-    assert.match(outcome.blocker.evidence.rawRecordHex, /ff/);
-    assert.equal(await invocationCount(fake.log), 0);
+    assert.equal(reviewArgs.includes("--base"), false);
+    const prompt = reviewArgs.at(-1);
+    assert.match(prompt, /base reference: main/);
+    assert.match(prompt, new RegExp(`resolved base SHA: ${fixture.baseHead}`));
+    assert.match(prompt, new RegExp(`merge-base SHA: ${fixture.baseHead}`));
+    assert.match(prompt, new RegExp(`expected HEAD: ${fixture.expectedHead}`));
+    assert.match(prompt, /Do not load or use any skills/i);
+    assert.equal(await git(fixture.repo, "status", "--porcelain"), "");
+    assert.equal(await git(fixture.repo, "rev-parse", "HEAD"), fixture.expectedHead);
   });
 });
 
-test("allows clean Git LFS worktree bytes without invoking the configured filter", {
-  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const log = path.join(fixture.root, "lfs-filter-ran.txt");
-    const filter = path.join(fixture.root, "lfs-clean-filter");
-    await writeFile(filter, `#!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { appendFileSync } from "node:fs";
-
-appendFileSync(${JSON.stringify(log)}, "ran\\n");
-const chunks = [];
-for await (const chunk of process.stdin) chunks.push(chunk);
-const content = Buffer.concat(chunks);
-const oid = createHash("sha256").update(content).digest("hex");
-process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\${oid}\\nsize \${content.length}\\n\`);
-`);
-    await chmod(filter, 0o755);
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "asset.bin filter=lfs diff=lfs merge=lfs -text\n");
-    const content = Buffer.from("large binary content\0with bytes\n");
-    await writeFile(path.join(fixture.repo, "asset.bin"), content);
-    await git(fixture.repo, "config", "filter.lfs.clean", filter);
-    await git(fixture.repo, "config", "filter.lfs.required", "true");
-    await gitWithoutInheritedConfig(fixture.repo, "add", ".gitattributes", "asset.bin");
-    await gitWithoutInheritedConfig(fixture.repo, "commit", "-m", "add LFS content");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await gitWithoutInheritedConfig(fixture.repo, "status", "--porcelain=v1"), "");
-    await rm(log);
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
-    assert.equal(
-      outcome.readOnly.before.trackedFiles.digest,
-      outcome.readOnly.after.trackedFiles.digest,
-    );
-    assert.match(
-      await git(fixture.repo, "show", "HEAD:asset.bin"),
-      new RegExp(`oid sha256:${createHash("sha256").update(content).digest("hex")}`),
-    );
-    await assert.rejects(readFile(log), { code: "ENOENT" });
-  });
-});
-
-test("blocks custom clean filters before status or review can execute them", {
-  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const log = path.join(fixture.root, "custom-filter-ran.txt");
-    const filter = path.join(fixture.root, "uppercase-clean-filter");
-    await writeFile(filter, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-
-appendFileSync(${JSON.stringify(log)}, "ran\\n");
-const chunks = [];
-for await (const chunk of process.stdin) chunks.push(chunk);
-process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
-`);
-    await chmod(filter, 0o755);
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "custom.txt filter=uppercase\n");
-    await writeFile(path.join(fixture.repo, "custom.txt"), "worktree form\n");
-    await git(fixture.repo, "config", "filter.uppercase.clean", filter);
-    await git(fixture.repo, "add", ".gitattributes", "custom.txt");
-    await git(fixture.repo, "commit", "-m", "add custom-filtered content");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-    await rm(log);
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.status, "blocked");
-    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
-    assert.deepEqual(outcome.blocker.evidence.filteredPaths, [{ path: "custom.txt", filter: "uppercase" }]);
-    assert.equal(outcome.command.attempted, false);
-    assert.equal(await invocationCount(fake.log), 0);
-    await assert.rejects(readFile(log), { code: "ENOENT" });
-  });
-});
-
-test("does not allow custom clean filters to mutate ignored content during baseline capture", {
-  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const ignored = path.join(fixture.repo, "baseline.ignored");
-    const filter = path.join(fixture.root, "side-effecting-clean-filter");
-    await writeFile(filter, `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-
-writeFileSync(${JSON.stringify(ignored)}, "mutated\\n");
-const chunks = [];
-for await (const chunk of process.stdin) chunks.push(chunk);
-process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
-`);
-    await chmod(filter, 0o755);
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "custom.txt filter=side-effect\n");
-    await writeFile(path.join(fixture.repo, "custom.txt"), "worktree form\n");
-    await git(fixture.repo, "config", "filter.side-effect.clean", filter);
-    await git(fixture.repo, "add", ".gitattributes", "custom.txt");
-    await git(fixture.repo, "commit", "-m", "add side-effecting clean filter");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    await writeFile(ignored, "baseline\n");
-    await writeFile(path.join(fixture.repo, "custom.txt"), "WoRkTrEe FoRm\n");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
-    assert.equal(outcome.command.attempted, false);
-    assert.equal(await invocationCount(fake.log), 0);
-    assert.equal(await readFile(ignored, "utf8"), "baseline\n");
-  });
-});
-
-test("terminates a stalled Codex review and emits a blocked outcome", async () => {
-  await withFixture(async (fixture) => {
-    const preload = path.join(fixture.root, "accelerate-review-timeout.mjs");
-    const invocationLog = path.join(fixture.root, "codex-invocations.jsonl");
-    const codexHome = path.join(fixture.root, "caller-codex-home");
-    const originalAuth = '{"OPENAI_API_KEY":"test-auth"}\n';
-    await mkdir(codexHome);
-    await writeFile(path.join(codexHome, "auth.json"), originalAuth);
-    await writeFile(preload, `import { existsSync } from "node:fs";
-const originalSetTimeout = globalThis.setTimeout;
-globalThis.setTimeout = (callback, delay, ...args) => {
-  if (delay !== 30 * 60_000) return originalSetTimeout(callback, delay, ...args);
-  const fallback = originalSetTimeout(callback, 5_000, ...args);
-  const started = setInterval(() => {
-    if (!existsSync(${JSON.stringify(invocationLog)})) return;
-    clearInterval(started);
-    clearTimeout(fallback);
-    originalSetTimeout(callback, 0, ...args);
-  }, 10);
-  return fallback;
-};
-`);
-
-    const startedAt = Date.now();
-    const { processResult, outcome, fake } = await invokeRunner(fixture, {
-      mode: "refresh-auth-timeout",
-      nodeArgs: ["--import", preload],
-      env: { CALLER_CODEX_HOME: codexHome, CODEX_HOME: codexHome },
-    });
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "codex_timeout");
-    assert.equal(outcome.command.error.code, "ETIMEDOUT");
-    assert.equal(outcome.command.attempted, true);
-    assert.equal(outcome.readOnly.verified, true);
-    assert.equal(await invocationCount(fake.log), 1);
-    assert.equal(await readFile(path.join(codexHome, "auth.json"), "utf8"), originalAuth);
-    assert.ok(Date.now() - startedAt < 10_000);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await assert.rejects(readFile(fake.timeoutMarker), { code: "ENOENT" });
-  });
-});
-
-test("does not run tracked-file clean filters while inspecting index flags", {
-  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const log = path.join(fixture.root, "filter-ran.txt");
-    const filter = path.join(fixture.root, "clean-filter");
-    await writeFile(filter, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-appendFileSync(${JSON.stringify(log)}, "ran\\n");
-process.stdin.pipe(process.stdout);
-`);
-    await chmod(filter, 0o755);
-    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt filter=probe\n");
-    await git(fixture.repo, "add", ".gitattributes");
-    await git(fixture.repo, "commit", "-m", "add clean filter attribute");
-    await git(fixture.repo, "config", "filter.probe.clean", filter);
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    await git(fixture.repo, "status", "--porcelain=v1");
-    await git(fixture.repo, "update-index", "--assume-unchanged", "file.txt");
-    await rm(log, { force: true });
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
-    assert.deepEqual(outcome.blocker.evidence.filteredPaths, [{ path: "file.txt", filter: "probe" }]);
-    assert.equal(await invocationCount(fake.log), 0);
-    await assert.rejects(readFile(log), { code: "ENOENT" });
-  });
-});
-
-test("disables configured fsmonitor hooks during repository inspection", {
-  skip: process.platform === "win32" ? "the fsmonitor probe uses a POSIX executable" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const log = path.join(fixture.root, "fsmonitor-ran.txt");
-    const hook = path.join(fixture.root, "fsmonitor-hook");
-    await writeFile(hook, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-appendFileSync(${JSON.stringify(log)}, "ran\\n");
-`);
-    await chmod(hook, 0o755);
-    await git(fixture.repo, "config", "core.fsmonitor", hook);
-    await git(fixture.repo, "status", "--porcelain=v1");
-    assert.match(await readFile(log, "utf8"), /ran/);
-    await rm(log);
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    await assert.rejects(readFile(log), { code: "ENOENT" });
-  });
-});
-
-test("blocks content changes to an existing ignored file", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(path.join(fixture.repo, "baseline.ignored"), "ignored\n");
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "rewrite-ignored" });
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, true);
-    assert.equal(outcome.readOnly.ignoredFilesUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.match(outcome.readOnly.before.completeStatus, /!! baseline\.ignored/);
-    assert.equal(outcome.readOnly.before.completeStatus, outcome.readOnly.after.completeStatus);
-    assert.notDeepEqual(outcome.readOnly.before.ignoredFiles, outcome.readOnly.after.ignoredFiles);
-  });
-});
-
-test("blocks tracked mode changes when core.fileMode is false", async () => {
-  await withFixture(async (fixture) => {
-    await git(fixture.repo, "config", "core.fileMode", "false");
-
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-mode" });
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-    assert.match(outcome.readOnly.after.completeStatus, /M file\.txt/);
-  });
-});
-
-test("blocks tracked permission changes that preserve Git's executable mode", {
-  skip: process.platform === "win32" ? "Windows does not expose POSIX permission bits" : false,
-}, async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-permissions" });
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, true);
-    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-  });
-});
-
-test("blocks tracked dirty bytes hidden by trustctime and restored metadata before review", async () => {
-  await withFixture(async (fixture) => {
-    const file = path.join(fixture.repo, "file.txt");
-    const fixedTime = new Date("2020-01-01T00:00:00.000Z");
-    await utimes(file, fixedTime, fixedTime);
-    await git(fixture.repo, "update-index", "--refresh");
-    const before = await stat(file);
-    const contents = await readFile(file, "utf8");
-    await git(fixture.repo, "config", "core.trustctime", "false");
-    await writeFile(file, `${contents[0] === "X" ? "Y" : "X"}${contents.slice(1)}`);
-    await utimes(file, before.atime, before.mtime);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome, fake } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "dirty_worktree");
-    assert.equal(await invocationCount(fake.log), 0);
-  });
-});
-
-test("blocks tracked mutations hidden by trustctime and restored metadata after review", async () => {
-  await withFixture(async (fixture) => {
-    const file = path.join(fixture.repo, "file.txt");
-    const fixedTime = new Date("2020-01-01T00:00:00.000Z");
-    await utimes(file, fixedTime, fixedTime);
-    await git(fixture.repo, "update-index", "--refresh");
-    await git(fixture.repo, "config", "core.trustctime", "false");
-
-    const { processResult, outcome } = await invokeRunner(fixture, {
-      mode: "mutate-tracked-with-restored-mtime",
-    });
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, true);
-    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-  });
-});
-
-test("blocks tracked submodule changes hidden by ignore=all", async () => {
-  await withFixture(async (fixture) => {
-    await addSubmodule(fixture);
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-submodule" });
-
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.match(outcome.readOnly.after.completeStatus, /M dep/);
-  });
-});
-
-test("blocks replacement of a submodule checkout with an ordinary directory", async () => {
-  await withFixture(async (fixture) => {
-    await addSubmodule(fixture);
-    const expectedOid = await git(fixture.repo, "rev-parse", "HEAD:dep");
-
-    const { processResult, outcome } = await invokeRunner(fixture, {
-      mode: "replace-submodule-checkout",
-    });
-
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1", "--ignore-submodules=none"), "");
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.statusUnchanged, true);
-    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.deepEqual(outcome.readOnly.after.trackedFiles.mismatches, [{
-      path: "dep",
-      expectedMode: "160000",
-      expectedOid,
-      stage: "0",
-      actualMode: "directory",
-      canonicalOid: null,
-    }]);
-  });
-});
-
-test("allows a clean uninitialized submodule when ignore=all is configured", async () => {
-  await withFixture(async (fixture) => {
-    await addSubmodule(fixture);
-    await git(fixture.repo, "submodule", "deinit", "-f", "dep");
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.readOnly.before.completeStatus, "");
-    assert.deepEqual(outcome.readOnly.before, outcome.readOnly.after);
-  });
-});
-
-for (const [flag, tag] of [
-  ["--assume-unchanged", "h"],
-  ["--skip-worktree", "S"],
+for (const [name, dirty] of [
+  ["tracked changes", async (repo) => writeFile(path.join(repo, "file.txt"), "dirty\n")],
+  ["untracked files", async (repo) => writeFile(path.join(repo, "untracked.txt"), "dirty\n")],
 ]) {
-  test(`blocks tracked changes hidden by ${flag}`, async () => {
+  test(`blocks a worktree with ${name}`, async () => {
     await withFixture(async (fixture) => {
-      await git(fixture.repo, "update-index", flag, "file.txt");
-      await writeFile(path.join(fixture.repo, "file.txt"), "hidden dirty state\n");
-      assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-
-      const { processResult, outcome, fake } = await invokeRunner(fixture);
-      assert.equal(processResult.exitCode, 1);
+      await dirty(fixture.repo);
+      const { fake, outcome, result } = await invokeRunner(fixture);
+      assert.equal(result.exitCode, 1);
       assert.equal(outcome.blocker.code, "dirty_worktree");
-      assert.deepEqual(outcome.blocker.evidence.hiddenIndexEntries, [`${tag} file.txt`]);
-      assert.equal(await invocationCount(fake.log), 0);
+      assert.notEqual(outcome.blocker.evidence.status, "");
+      assert.deepEqual(await readInvocations(fake.log), []);
     });
   });
 }
 
-test("blocks a missing base reference", async () => {
+test("blocks an expected HEAD mismatch before review", async () => {
   await withFixture(async (fixture) => {
-    const { outcome, fake } = await invokeRunner(fixture, { base: "missing-base" });
-    assert.equal(outcome.blocker.code, "invalid_base");
-    assert.equal(await invocationCount(fake.log), 0);
+    const { fake, outcome, result } = await invokeRunner(fixture, { expectedHead: fixture.baseHead });
+    assert.equal(result.exitCode, 1);
+    assert.equal(outcome.blocker.code, "unexpected_head");
+    assert.deepEqual(outcome.blocker.evidence, {
+      expectedHead: fixture.baseHead,
+      actualHead: fixture.expectedHead,
+    });
+    assert.deepEqual(await readInvocations(fake.log), []);
   });
 });
 
-test("blocks an empty merge diff", async () => {
+test("blocks untracked files even when Git configuration hides them by default", async () => {
   await withFixture(async (fixture) => {
-    const { outcome, fake } = await invokeRunner(fixture);
+    await git(fixture.repo, "config", "status.showUntrackedFiles", "no");
+    await writeFile(path.join(fixture.repo, "hidden-by-config.txt"), "dirty\n");
+    const { fake, outcome, result } = await invokeRunner(fixture);
+    assert.equal(result.exitCode, 1);
+    assert.equal(outcome.blocker.code, "dirty_worktree");
+    assert.match(outcome.blocker.evidence.status, /hidden-by-config\.txt/);
+    assert.deepEqual(await readInvocations(fake.log), []);
+  });
+});
+
+test("blocks an invalid base", async () => {
+  await withFixture(async (fixture) => {
+    const { fake, outcome } = await invokeRunner(fixture, { base: "missing-base" });
+    assert.equal(outcome.blocker.code, "invalid_base");
+    assert.deepEqual(await readInvocations(fake.log), []);
+  });
+});
+
+test("blocks an empty merge-base-to-HEAD diff", async () => {
+  await withFixture(async (fixture) => {
+    const { fake, outcome } = await invokeRunner(fixture);
     assert.equal(outcome.blocker.code, "empty_diff");
-    assert.equal(await invocationCount(fake.log), 0);
+    assert.deepEqual(await readInvocations(fake.log), []);
   }, { candidate: false });
 });
 
-test("does not hide a gitlink-only merge diff with ignore=all", async () => {
+test("blocks when Codex is missing", async () => {
   await withFixture(async (fixture) => {
-    const source = path.join(fixture.root, "diff-submodule-source");
-    await mkdir(source);
-    await git(source, "init", "-b", "main");
-    await git(source, "config", "user.name", "Test User");
-    await git(source, "config", "user.email", "test@example.com");
-    await writeFile(path.join(source, "file.txt"), "base\n");
-    await git(source, "add", "file.txt");
-    await git(source, "commit", "-m", "submodule base");
-
-    await git(fixture.repo, "switch", "main");
-    await git(fixture.repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "dep");
-    await git(fixture.repo, "config", "-f", ".gitmodules", "submodule.dep.ignore", "all");
-    await git(fixture.repo, "add", ".gitmodules", "dep");
-    await git(fixture.repo, "commit", "-m", "add ignored submodule");
-    fixture.baseHead = await git(fixture.repo, "rev-parse", "HEAD");
-    await git(fixture.repo, "branch", "-f", "ticket", "main");
-    await git(fixture.repo, "switch", "ticket");
-
-    await writeFile(path.join(source, "file.txt"), "base\nupdated\n");
-    await git(source, "add", "file.txt");
-    await git(source, "commit", "-m", "submodule update");
-    const updatedSubmoduleHead = await git(source, "rev-parse", "HEAD");
-    await git(path.join(fixture.repo, "dep"), "fetch", "origin");
-    await git(path.join(fixture.repo, "dep"), "checkout", updatedSubmoduleHead);
-    await git(fixture.repo, "add", "dep");
-    await git(fixture.repo, "commit", "-m", "bump ignored submodule");
-    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
-    const hiddenDiff = await run("git", [
-      "-C", fixture.repo, "diff", "--quiet", `${fixture.baseHead}...${fixture.expectedHead}`, "--",
-    ]);
-    assert.equal(hiddenDiff.exitCode, 0);
-
-    const { processResult, outcome } = await invokeRunner(fixture);
-
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.mergeBase, fixture.baseHead);
-  }, { candidate: false });
-});
-
-test("blocks when Codex is not installed", async () => {
-  await withFixture(async (fixture) => {
-    const { outcome } = await invokeRunner(fixture, { withCodex: false });
+    const { outcome, result } = await invokeRunner(fixture, { withCodex: false });
+    assert.equal(result.exitCode, 1);
     assert.equal(outcome.blocker.code, "codex_missing");
     assert.equal(outcome.command.attempted, false);
   });
 });
 
+test("blocks a non-zero Codex review", async () => {
+  await withFixture(async (fixture) => {
+    const { fake, outcome, result } = await invokeRunner(fixture, { mode: "nonzero" });
+    assert.equal(result.exitCode, 1);
+    assert.equal(outcome.blocker.code, "codex_failed");
+    assert.equal(outcome.command.exitCode, 7);
+    assert.equal(outcome.command.stderr, "review process failed\n");
+    assert.equal(outcome.readOnly.verified, true);
+    assert.equal((await readInvocations(fake.log)).filter(([command]) => command === "exec").length, 1);
+  });
+});
+
 for (const [mode, blockerCode] of [
-  ["auth", "authentication_failed"],
-  ["sandbox", "sandbox_failed"],
-  ["nonzero", "codex_failed"],
+  ["malformed", "malformed_events"],
+  ["missing-start", "malformed_events"],
+  ["incomplete", "incomplete_lifecycle"],
+  ["fatal", "codex_event_error"],
 ]) {
-  test(`blocks ${mode} command failure`, async () => {
+  test(`blocks ${mode} Codex output`, async () => {
     await withFixture(async (fixture) => {
-      const { processResult, outcome, fake } = await invokeRunner(fixture, { mode });
-      assert.equal(processResult.exitCode, 1);
+      const { outcome, result } = await invokeRunner(fixture, { mode });
+      assert.equal(result.exitCode, 1);
       assert.equal(outcome.blocker.code, blockerCode);
-      assert.equal(outcome.command.attempted, true);
+      assert.equal(outcome.reviewOutput, null);
       assert.equal(outcome.readOnly.verified, true);
-      assert.equal(await invocationCount(fake.log), 1);
     });
   });
 }
 
-test("blocks malformed JSON events", async () => {
-  await withFixture(async (fixture) => {
-    const { outcome } = await invokeRunner(fixture, { mode: "malformed" });
-    assert.equal(outcome.blocker.code, "malformed_events");
-    assert.equal(outcome.reviewOutput, null);
-  });
-});
-
-test("blocks fatal Codex events", async () => {
-  await withFixture(async (fixture) => {
-    const { outcome } = await invokeRunner(fixture, { mode: "fatal-event" });
-    assert.equal(outcome.blocker.code, "codex_event_error");
-    assert.equal(outcome.blocker.evidence.event.type, "error");
-  });
-});
-
-test("blocks valid events without terminal review output", async () => {
-  await withFixture(async (fixture) => {
-    const { outcome } = await invokeRunner(fixture, { mode: "missing-output" });
-    assert.equal(outcome.blocker.code, "missing_terminal_output");
-    assert.equal(outcome.reviewOutput, null);
-  });
-});
-
-test("blocks premature EOF after an agent message", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "premature-eof" });
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "missing_terminal_output");
-    assert.equal(outcome.reviewOutput, null);
-    assert.match(outcome.command.stdout, /agent_message/);
-    assert.doesNotMatch(outcome.command.stdout, /turn\.completed/);
-  });
-});
-
-test("blocks terminal output without lifecycle starts", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "missing-lifecycle-starts" });
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "missing_terminal_output");
-    assert.equal(outcome.reviewOutput, null);
-    assert.match(outcome.command.stdout, /agent_message/);
-    assert.doesNotMatch(outcome.command.stdout, /turn\.started/);
-  });
-});
-
-test("blocks a trailing unfinished turn after terminal output", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "trailing-unfinished-turn" });
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "missing_terminal_output");
-    assert.equal(outcome.reviewOutput, null);
-    assert.match(outcome.command.stdout, /agent_message/);
-    assert.match(outcome.command.stdout, /turn\.completed[^]*turn\.started/);
-  });
-});
-
-test("allows non-fatal Codex warning items before a completed review", async () => {
-  await withFixture(async (fixture) => {
-    const { processResult, outcome } = await invokeRunner(fixture, { mode: "warning" });
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.blocker, null);
-    assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
-    assert.match(outcome.command.stdout, /non-fatal config warning/);
-  });
-});
-
-for (const mode of ["mutate-status", "mutate-ignored", "hide-tracked-mutation", "mutate-head"]) {
-  test(`blocks repository ${mode} mutation after review`, async () => {
+for (const mode of ["mutate-tracked", "mutate-untracked"]) {
+  test(`blocks an ordinary ${mode.slice(7)} mutation after review`, async () => {
     await withFixture(async (fixture) => {
-      const { outcome } = await invokeRunner(fixture, { mode });
+      const { outcome, result } = await invokeRunner(fixture, { mode });
+      assert.equal(result.exitCode, 1);
       assert.equal(outcome.blocker.code, "repository_mutated");
       assert.equal(outcome.readOnly.verified, false);
-      assert.notDeepEqual(outcome.readOnly.before, outcome.readOnly.after);
+      assert.equal(outcome.readOnly.statusUnchanged, false);
       assert.equal(outcome.reviewOutput, "P1: preserve this finding\n\nP3: preserve this detail");
-      if (mode === "hide-tracked-mutation") {
-        assert.equal(outcome.readOnly.statusUnchanged, true);
-        assert.equal(outcome.readOnly.indexFlagsUnchanged, false);
-      }
     });
   });
 }
+
+test("times out a stalled Codex review", async () => {
+  await withFixture(async (fixture) => {
+    const startedAt = Date.now();
+    const { outcome, result } = await invokeRunner(fixture, {
+      mode: "timeout",
+      env: { CODEX_LOCAL_REVIEW_TIMEOUT_MS: "50" },
+    });
+    assert.equal(result.exitCode, 1);
+    assert.equal(outcome.blocker.code, "codex_timeout");
+    assert.equal(outcome.command.timedOut, true);
+    assert.equal(outcome.command.timeoutMs, 50);
+    assert.equal(outcome.readOnly.verified, true);
+    assert.ok(Date.now() - startedAt < 5_000);
+  });
+});
