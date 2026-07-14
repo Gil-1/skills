@@ -235,7 +235,11 @@ async function runPreflight(options) {
   }
 
   const version = await runProcess("codex", ["--version"]);
-  if (version.error?.code === "ENOENT") {
+  const windowsCommandMissing = process.platform === "win32"
+    && version.exitCode === 1
+    && /codex(?:\.cmd)?/i.test(version.stderr)
+    && /not (?:recognized|found)/i.test(version.stderr);
+  if (version.error?.code === "ENOENT" || windowsCommandMissing) {
     return block(outcome, "codex_missing", "Codex CLI was not found on PATH.");
   }
   if (version.exitCode !== 0) {
