@@ -163,7 +163,9 @@ function parseReviewEvents(stdout) {
           && event.item?.type === "agent_message"
           && typeof event.item.text === "string"
           && event.item.text.trim()) {
-        reviewOutput = event.item.text;
+        reviewOutput = reviewOutput === null
+          ? event.item.text
+          : `${reviewOutput}\n\n${event.item.text}`;
       }
     } else if (event.type === "turn.completed" && phase === "items" && reviewOutput !== null) {
       phase = "complete";

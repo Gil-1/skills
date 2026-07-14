@@ -38,6 +38,7 @@ async function createRepository({ candidate = true } = {}) {
   await git(repo, "init", "-b", "main");
   await git(repo, "config", "user.name", "Test User");
   await git(repo, "config", "user.email", "test@example.com");
+  await git(repo, "config", "commit.gpgsign", "false");
   await writeFile(path.join(repo, "file.txt"), "base\n");
   await git(repo, "add", "file.txt");
   await git(repo, "commit", "-m", "base");
@@ -102,6 +103,12 @@ console.log(JSON.stringify({ type: "turn.started" }));
 if (mode === "fatal") {
   console.log(JSON.stringify({ type: "turn.failed", error: { message: "fatal review failure" } }));
   process.exit(0);
+}
+if (mode === "multiple-messages") {
+  console.log(JSON.stringify({
+    type: "item.completed",
+    item: { type: "agent_message", text: "P2: preserve this earlier finding" },
+  }));
 }
 console.log(JSON.stringify({
   type: "item.completed",
@@ -253,6 +260,17 @@ test("closes Codex stdin before review", async () => {
     assert.equal(result.exitCode, 0);
     assert.equal(outcome.status, "passed");
     assert.equal(outcome.command.timedOut, false);
+  });
+});
+
+test("preserves multiple agent messages in event order", async () => {
+  await withFixture(async (fixture) => {
+    const { outcome, result } = await invokeRunner(fixture, { mode: "multiple-messages" });
+    assert.equal(result.exitCode, 0);
+    assert.equal(
+      outcome.reviewOutput,
+      "P2: preserve this earlier finding\n\nP1: preserve this finding\n\nP3: preserve this detail",
+    );
   });
 });
 
