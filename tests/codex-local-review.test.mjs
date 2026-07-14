@@ -175,6 +175,9 @@ if (mode === "hide-tracked-mutation") {
 if (mode === "mutate-mode") {
   chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o755);
 }
+if (mode === "mutate-permissions") {
+  chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o600);
+}
 if (mode === "mutate-tracked-with-restored-mtime") {
   const file = new URL("file.txt", "file://" + worktree + "/");
   const before = statSync(file);
@@ -546,6 +549,80 @@ test("allows ignored files in the initial clean worktree state", async () => {
   });
 });
 
+test("allows Git-clean symlinks represented as regular files", async () => {
+  await withFixture(async (fixture) => {
+    const linkPath = path.join(fixture.repo, "link.txt");
+    await writeFile(linkPath, "file.txt");
+    const oid = await git(fixture.repo, "hash-object", "-w", "--no-filters", "--", "link.txt");
+    await git(fixture.repo, "update-index", "--add", "--cacheinfo", `120000,${oid},link.txt`);
+    await git(fixture.repo, "commit", "-m", "add portable symlink");
+    await git(fixture.repo, "config", "core.symlinks", "false");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+  });
+});
+
+test("does not run tracked-file clean filters while fingerprinting", {
+  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const log = path.join(fixture.root, "filter-ran.txt");
+    const filter = path.join(fixture.root, "clean-filter");
+    await writeFile(filter, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(log)}, "ran\\n");
+process.stdin.pipe(process.stdout);
+`);
+    await chmod(filter, 0o755);
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt filter=probe\n");
+    await git(fixture.repo, "add", ".gitattributes");
+    await git(fixture.repo, "commit", "-m", "add clean filter attribute");
+    await git(fixture.repo, "config", "filter.probe.clean", filter);
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    await git(fixture.repo, "status", "--porcelain=v1");
+    await git(fixture.repo, "update-index", "--assume-unchanged", "file.txt");
+    await rm(log, { force: true });
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "dirty_worktree");
+    assert.deepEqual(outcome.blocker.evidence.hiddenIndexEntries, ["h file.txt"]);
+    assert.equal(await invocationCount(fake.log), 0);
+    await assert.rejects(readFile(log), { code: "ENOENT" });
+  });
+});
+
+test("disables configured fsmonitor hooks during repository inspection", {
+  skip: process.platform === "win32" ? "the fsmonitor probe uses a POSIX executable" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const log = path.join(fixture.root, "fsmonitor-ran.txt");
+    const hook = path.join(fixture.root, "fsmonitor-hook");
+    await writeFile(hook, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(log)}, "ran\\n");
+`);
+    await chmod(hook, 0o755);
+    await git(fixture.repo, "config", "core.fsmonitor", hook);
+    await git(fixture.repo, "status", "--porcelain=v1");
+    assert.match(await readFile(log, "utf8"), /ran/);
+    await rm(log);
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    await assert.rejects(readFile(log), { code: "ENOENT" });
+  });
+});
+
 test("blocks content changes to an existing ignored file", async () => {
   await withFixture(async (fixture) => {
     await writeFile(path.join(fixture.repo, "baseline.ignored"), "ignored\n");
@@ -573,6 +650,21 @@ test("blocks tracked mode changes when core.fileMode is false", async () => {
     assert.equal(outcome.readOnly.verified, false);
     assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
     assert.match(outcome.readOnly.after.completeStatus, /M file\.txt/);
+  });
+});
+
+test("blocks tracked permission changes that preserve Git's executable mode", {
+  skip: process.platform === "win32" ? "Windows does not expose POSIX permission bits" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "mutate-permissions" });
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, true);
+    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
   });
 });
 

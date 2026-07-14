@@ -154,7 +154,7 @@ async function sanitizedProcessEnvironment(worktree) {
 }
 
 async function git(worktree, args, env, gitExecutable) {
-  return runProcess(gitExecutable, ["-C", worktree, ...args], { env });
+  return runProcess(gitExecutable, ["-C", worktree, "-c", "core.fsmonitor=false", ...args], { env });
 }
 
 async function isolatedCodexEnvironment(env, worktree) {
@@ -277,11 +277,13 @@ async function captureState(worktree, env, gitExecutable) {
     const [expectedMode, expectedOid, stage] = metadata;
     const relativePath = entry.slice(separator + 1);
     let actualMode = "missing";
+    let filesystemMode = null;
     let canonicalOid = null;
     let worktreeDigest = null;
     try {
       const absolutePath = path.join(worktree, relativePath);
       const stats = await lstat(absolutePath);
+      filesystemMode = stats.mode;
       if (expectedMode === "160000" && stats.isDirectory()) {
         actualMode = "directory";
         const entries = await readdir(absolutePath);
@@ -310,8 +312,8 @@ async function captureState(worktree, env, gitExecutable) {
         canonicalOid = hashResult.stdout.trim();
         worktreeDigest = createHash("sha256").update(target).digest("hex");
       } else if (stats.isFile()) {
-        actualMode = stats.mode & 0o111 ? "100755" : "100644";
-        const hashResult = await git(worktree, ["hash-object", "--", relativePath], env, gitExecutable);
+        actualMode = expectedMode === "120000" ? "120000" : stats.mode & 0o111 ? "100755" : "100644";
+        const hashResult = await git(worktree, ["hash-object", "--no-filters", "--", relativePath], env, gitExecutable);
         if (hashResult.exitCode !== 0) throw new Error(commandFailure(hashResult));
         canonicalOid = hashResult.stdout.trim();
         const hash = createHash("sha256");
@@ -321,7 +323,16 @@ async function captureState(worktree, env, gitExecutable) {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    const fingerprintEntry = { path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid, worktreeDigest };
+    const fingerprintEntry = {
+      path: relativePath,
+      expectedMode,
+      expectedOid,
+      stage,
+      actualMode,
+      filesystemMode,
+      canonicalOid,
+      worktreeDigest,
+    };
     trackedFingerprint.update(`${JSON.stringify(fingerprintEntry)}\n`);
     if (stage !== "0" || actualMode !== expectedMode || canonicalOid !== expectedOid) {
       trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
