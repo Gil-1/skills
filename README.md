@@ -22,15 +22,17 @@ npx skills@latest add Gil-1/skills -g -a "*" --skill "*" --full-depth -y
 
 This installs:
 
-- `handle-tickets` - orchestrates existing implementation-ready tickets through implementation, fresh code review, scoped fixes, PR publication, and Codex PR review.
+- `handle-tickets` - orchestrates implementation-ready tickets through implementation, fresh code review, a local Codex preflight gate, PR publication, and authoritative GitHub Codex validation.
 - `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
 - `review-fix` - reviews code changes, fixes actionable findings, and verifies the result.
-- `codex-pr-review` - waits for automated Codex PR review, handles valid comments, investigates repeated feedback patterns, pushes fixes, and loops until Codex validates the PR.
+- `codex-pr-review` - waits for authoritative GitHub Codex PR validation, handles valid comments, investigates repeated feedback patterns, pushes fixes, and loops until Codex validates the current PR head.
 - `codex-local-review` - runs one isolated, read-only local Codex preflight against a clean branch and returns findings tied to the reviewed HEAD.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
 - `game-improvement-loop` - runs validated game-improvement cycles through PRD, implementation, and playtest evidence.
+
+`handle-tickets` runs local Codex preflight before publication to surface implementation risks earlier and reduce avoidable GitHub feedback rounds. GitHub Codex still validates the published current head independently; local preflight does not shorten or replace an individual GitHub review's queue time.
 
 ## Matt Pocock Dependencies
 
