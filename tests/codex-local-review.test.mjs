@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -73,29 +73,30 @@ async function addSubmodule(fixture) {
   fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
 }
 
-async function installFakeCodex(root) {
+async function installFakeCodex(root, options = {}) {
   const bin = path.join(root, "bin");
   const log = path.join(root, "codex-invocations.jsonl");
   await mkdir(bin);
   const executable = path.join(bin, "codex");
   const homeLog = path.join(root, "codex-home.txt");
   await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 const args = process.argv.slice(2);
+const mode = ${JSON.stringify(options.mode ?? "success")};
+const callerCodexHome = ${JSON.stringify(options.env?.CALLER_CODEX_HOME ?? null)};
 if (args.includes("--version")) {
   console.log("codex-cli 9.9.9");
   process.exit(0);
 }
 
-appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(args) + "\\n");
-const mode = process.env.FAKE_CODEX_MODE || "success";
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
 const worktree = args[args.indexOf("--cd") + 1];
 if (mode === "check-isolated-home" || mode === "refresh-auth") {
-  writeFileSync(process.env.FAKE_CODEX_HOME_LOG, process.env.CODEX_HOME);
-  if (process.env.CODEX_HOME === process.env.CALLER_CODEX_HOME
+  writeFileSync(${JSON.stringify(homeLog)}, process.env.CODEX_HOME);
+  if (process.env.CODEX_HOME === callerCodexHome
       || existsSync(path.join(process.env.CODEX_HOME, "AGENTS.md"))
       || readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8") !== "test-auth\\n") {
     console.error("Codex home was not isolated from caller instructions while retaining auth");
@@ -111,6 +112,21 @@ if (mode === "check-git-environment") {
   if (localEnv.status !== 0 || inherited.length > 0 || process.env.GIT_OPTIONAL_LOCKS !== "0") {
     console.error("inherited Git-local environment: " + inherited.join(", "));
     process.exit(8);
+  }
+}
+if (mode === "check-sanitized-environment") {
+  const leaked = ["AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "UNRELATED_SECRET"]
+    .filter((name) => process.env[name] !== undefined);
+  if (leaked.length > 0 || process.env.CODEX_API_KEY !== "codex-auth") {
+    console.error("unsafe Codex environment: " + leaked.join(", "));
+    process.exit(10);
+  }
+}
+if (mode === "check-review-path") {
+  const reviewGit = spawnSync("git", ["--version"], { cwd: worktree, encoding: "utf8" });
+  if (reviewGit.status !== 0 || reviewGit.stdout.includes("spoofed candidate executable")) {
+    console.error("review command resolved a candidate executable");
+    process.exit(11);
   }
 }
 if (mode === "auth") {
@@ -154,6 +170,13 @@ if (mode === "hide-tracked-mutation") {
 if (mode === "mutate-mode") {
   chmodSync(new URL("file.txt", "file://" + worktree + "/"), 0o755);
 }
+if (mode === "mutate-tracked-with-restored-mtime") {
+  const file = new URL("file.txt", "file://" + worktree + "/");
+  const before = statSync(file);
+  const contents = readFileSync(file, "utf8");
+  writeFileSync(file, (contents[0] === "X" ? "Y" : "X") + contents.slice(1));
+  utimesSync(file, before.atime, before.mtime);
+}
 if (mode === "mutate-submodule") {
   writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
 }
@@ -186,7 +209,7 @@ console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, 
 }
 
 async function invokeRunner(fixture, options = {}) {
-  const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root);
+  const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root, options);
   const args = [
     runner,
     "--worktree", options.worktree ?? fixture.repo,
@@ -196,11 +219,8 @@ async function invokeRunner(fixture, options = {}) {
   const env = {
     ...process.env,
     PATH: fake
-      ? `${options.candidatePath ? `${fixture.repo}/bin${path.delimiter}` : ""}${fake.bin}${path.delimiter}${process.env.PATH}`
+      ? `${options.pathPrefix ? `${options.pathPrefix}${path.delimiter}` : ""}${options.candidatePath ? `${fixture.repo}/bin${path.delimiter}` : ""}${fake.bin}${path.delimiter}${process.env.PATH}`
       : "/usr/bin:/bin",
-    FAKE_CODEX_LOG: fake?.log,
-    FAKE_CODEX_HOME_LOG: fake?.homeLog,
-    FAKE_CODEX_MODE: options.mode ?? "success",
     ...options.env,
   };
   const processResult = await run(process.execPath, args, { env });
@@ -254,16 +274,20 @@ test("captures one isolated local review against the runner-computed merge base"
       "exec", "--sandbox", "read-only", "--ephemeral", "--json", "--ignore-user-config", "--ignore-rules",
       "--config", "features.hooks=false",
       "--config", "skills.include_instructions=false",
-      "--config", `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`,
+      "--config", "shell_environment_policy.inherit=\"none\"",
     ]);
-    assert.equal(args[13], "--cd");
-    assert.equal(args[14], fixture.repo);
-    assert.equal(args[15], "review");
-    assert.match(args[16], new RegExp(`base reference: main`));
-    assert.match(args[16], new RegExp(`resolved base SHA: ${fixture.baseHead}`));
-    assert.match(args[16], new RegExp(`merge-base SHA: ${fixture.baseHead}`));
-    assert.match(args[16], new RegExp(`expected HEAD: ${fixture.expectedHead}`));
-    assert.match(args[16], /Do not load, invoke, or use any skills/i);
+    assert.equal(args[13], "--config");
+    assert.match(args[14], /^shell_environment_policy\.set=\{ PATH = ".*" \}$/);
+    assert.equal(args[15], "--config");
+    assert.equal(args[16], `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`);
+    assert.equal(args[17], "--cd");
+    assert.equal(args[18], fixture.repo);
+    assert.equal(args[19], "review");
+    assert.match(args[20], new RegExp(`base reference: main`));
+    assert.match(args[20], new RegExp(`resolved base SHA: ${fixture.baseHead}`));
+    assert.match(args[20], new RegExp(`merge-base SHA: ${fixture.baseHead}`));
+    assert.match(args[20], new RegExp(`expected HEAD: ${fixture.expectedHead}`));
+    assert.match(args[20], /Do not load, invoke, or use any skills/i);
   });
 });
 
@@ -288,6 +312,45 @@ printf 'spoofed candidate executable\\n'
     assert.equal(outcome.codexVersion, "codex-cli 9.9.9");
     assert.equal(outcome.command.executable, fake.executable);
     assert.equal(await invocationCount(fake.log), 1);
+  });
+});
+
+test("drops relative PATH entries before review commands run from the candidate", async () => {
+  await withFixture(async (fixture) => {
+    const candidateBin = path.join(fixture.repo, "bin");
+    await mkdir(candidateBin);
+    await writeFile(path.join(candidateBin, "git"), `#!/bin/sh
+printf 'spoofed candidate executable\n'
+`);
+    await chmod(path.join(candidateBin, "git"), 0o755);
+    await git(fixture.repo, "add", "bin/git");
+    await git(fixture.repo, "commit", "-m", "add relative PATH executable spoof");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+
+    const { processResult, outcome } = await invokeRunner(fixture, {
+      mode: "check-review-path",
+      pathPrefix: "bin",
+    });
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+  });
+});
+
+test("removes ambient secrets while retaining non-interactive Codex authentication", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, {
+      mode: "check-sanitized-environment",
+      env: {
+        AWS_SECRET_ACCESS_KEY: "aws-secret",
+        NPM_TOKEN: "npm-secret",
+        UNRELATED_SECRET: "other-secret",
+        CODEX_API_KEY: "codex-auth",
+      },
+    });
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
   });
 });
 
@@ -361,11 +424,17 @@ command = "candidate-side-effect"
     assert.equal(await invocationCount(fake.log), 1);
     assert.equal(outcome.command.args.includes("--ignore-user-config"), true);
     assert.equal(outcome.command.args.includes("--ignore-rules"), true);
+    const configOverrides = outcome.command.args.filter((_, index, args) => args[index - 1] === "--config");
+    assert.match(
+      configOverrides.find((arg) => arg.startsWith("shell_environment_policy.set=")),
+      /^shell_environment_policy\.set=\{ PATH = ".*" \}$/,
+    );
     assert.deepEqual(
-      outcome.command.args.filter((_, index, args) => args[index - 1] === "--config"),
+      configOverrides.filter((arg) => !arg.startsWith("shell_environment_policy.set=")),
       [
         "features.hooks=false",
         "skills.include_instructions=false",
+        "shell_environment_policy.inherit=\"none\"",
         `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`,
       ],
     );
@@ -464,6 +533,48 @@ test("blocks tracked mode changes when core.fileMode is false", async () => {
     assert.equal(outcome.readOnly.verified, false);
     assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
     assert.match(outcome.readOnly.after.completeStatus, /M file\.txt/);
+  });
+});
+
+test("blocks tracked dirty bytes hidden by trustctime and restored metadata before review", async () => {
+  await withFixture(async (fixture) => {
+    const file = path.join(fixture.repo, "file.txt");
+    const fixedTime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(file, fixedTime, fixedTime);
+    await git(fixture.repo, "update-index", "--refresh");
+    const before = await stat(file);
+    const contents = await readFile(file, "utf8");
+    await git(fixture.repo, "config", "core.trustctime", "false");
+    await writeFile(file, `${contents[0] === "X" ? "Y" : "X"}${contents.slice(1)}`);
+    await utimes(file, before.atime, before.mtime);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "dirty_worktree");
+    assert.equal(await invocationCount(fake.log), 0);
+  });
+});
+
+test("blocks tracked mutations hidden by trustctime and restored metadata after review", async () => {
+  await withFixture(async (fixture) => {
+    const file = path.join(fixture.repo, "file.txt");
+    const fixedTime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(file, fixedTime, fixedTime);
+    await git(fixture.repo, "update-index", "--refresh");
+    await git(fixture.repo, "config", "core.trustctime", "false");
+
+    const { processResult, outcome } = await invokeRunner(fixture, {
+      mode: "mutate-tracked-with-restored-mtime",
+    });
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, true);
+    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
   });
 });
 

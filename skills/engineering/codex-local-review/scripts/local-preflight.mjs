@@ -11,6 +11,16 @@ const usage = `Usage: local-preflight.mjs --worktree <path> --base <ref> --expec
 
 Run one isolated, read-only Codex review and emit one JSON outcome.`;
 
+const retainedEnvironmentNames = new Set([
+  "ALL_PROXY", "CODEX_ACCESS_TOKEN", "CODEX_API_KEY", "CODEX_CA_CERTIFICATE", "CODEX_HOME",
+  "COLORTERM", "COMSPEC", "HOME", "HOMEDRIVE", "HOMEPATH", "HTTP_PROXY", "HTTPS_PROXY",
+  "LANG", "LANGUAGE", "LC_ADDRESS", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_IDENTIFICATION",
+  "LC_MEASUREMENT", "LC_MESSAGES", "LC_MONETARY", "LC_NAME", "LC_NUMERIC", "LC_PAPER",
+  "LC_TELEPHONE", "LC_TIME", "LOGNAME", "NO_COLOR", "NO_PROXY", "PATH", "PATHEXT",
+  "SHELL", "SSL_CERT_DIR", "SSL_CERT_FILE", "SYSTEMROOT", "TEMP", "TERM", "TMP", "TMPDIR",
+  "TZ", "USER", "USERNAME", "USERPROFILE", "WINDIR",
+]);
+
 class InputError extends Error {
   constructor(message) {
     super(message);
@@ -55,8 +65,9 @@ function runProcess(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (options.input !== undefined) child.stdin.end(options.input);
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk) => { stdout += chunk; });
@@ -106,19 +117,23 @@ async function resolveExecutable(name, env) {
 }
 
 async function sanitizedProcessEnvironment(worktree) {
-  const env = { ...process.env };
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (retainedEnvironmentNames.has(name.toUpperCase())) env[name] = value;
+  }
   env.GIT_OPTIONAL_LOCKS = "0";
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   const safePath = [];
   for (const entry of (env[pathKey] ?? "").split(path.delimiter)) {
-    const lexicalPath = path.resolve(entry || process.cwd());
+    if (!entry || !path.isAbsolute(entry)) continue;
+    const lexicalPath = path.normalize(entry);
     let canonicalPath = lexicalPath;
     try {
       canonicalPath = await realpath(lexicalPath);
     } catch {
       // A missing PATH entry cannot currently supply an executable.
     }
-    if (!isWithin(worktree, lexicalPath) && !isWithin(worktree, canonicalPath)) safePath.push(entry);
+    if (!isWithin(worktree, lexicalPath) && !isWithin(worktree, canonicalPath)) safePath.push(canonicalPath);
   }
   env[pathKey] = safePath.join(path.delimiter);
 
@@ -200,6 +215,7 @@ function createOutcome(options = {}) {
       headUnchanged: null,
       statusUnchanged: null,
       indexFlagsUnchanged: null,
+      trackedFilesUnchanged: null,
       ignoredFilesUnchanged: null,
       verified: false,
     },
@@ -232,6 +248,53 @@ async function captureState(worktree, env, gitExecutable) {
     .split("\0")
     .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith("S ")))
     .sort();
+  const stagedResult = await git(worktree, ["ls-files", "--stage", "-z"], env, gitExecutable);
+  if (stagedResult.exitCode !== 0) throw new Error(`Could not inspect tracked files: ${commandFailure(stagedResult)}`);
+  const trackedFingerprint = createHash("sha256");
+  const trackedMismatches = [];
+  for (const entry of stagedResult.stdout.split("\0").filter(Boolean)) {
+    const separator = entry.indexOf("\t");
+    const metadata = separator === -1 ? [] : entry.slice(0, separator).split(" ");
+    if (metadata.length !== 3 || !/^\d+$/.test(metadata[0]) || !/^[0-9a-f]+$/.test(metadata[1])) {
+      throw new Error("Git returned an invalid tracked file entry.");
+    }
+    const [expectedMode, expectedOid, stage] = metadata;
+    const relativePath = entry.slice(separator + 1);
+    let actualMode = "missing";
+    let canonicalOid = null;
+    let worktreeDigest = null;
+    try {
+      const absolutePath = path.join(worktree, relativePath);
+      const stats = await lstat(absolutePath);
+      if (expectedMode === "160000" && stats.isDirectory()) {
+        actualMode = "160000";
+        canonicalOid = expectedOid;
+        worktreeDigest = expectedOid;
+      } else if (stats.isSymbolicLink()) {
+        actualMode = "120000";
+        const target = await readlink(absolutePath);
+        const hashResult = await runProcess(gitExecutable, ["hash-object", "--stdin"], { env, input: target });
+        if (hashResult.exitCode !== 0) throw new Error(commandFailure(hashResult));
+        canonicalOid = hashResult.stdout.trim();
+        worktreeDigest = createHash("sha256").update(target).digest("hex");
+      } else if (stats.isFile()) {
+        actualMode = stats.mode & 0o111 ? "100755" : "100644";
+        const hashResult = await git(worktree, ["hash-object", "--", relativePath], env, gitExecutable);
+        if (hashResult.exitCode !== 0) throw new Error(commandFailure(hashResult));
+        canonicalOid = hashResult.stdout.trim();
+        const hash = createHash("sha256");
+        for await (const chunk of createReadStream(absolutePath)) hash.update(chunk);
+        worktreeDigest = hash.digest("hex");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const fingerprintEntry = { path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid, worktreeDigest };
+    trackedFingerprint.update(`${JSON.stringify(fingerprintEntry)}\n`);
+    if (stage !== "0" || actualMode !== expectedMode || canonicalOid !== expectedOid) {
+      trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
+    }
+  }
   const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env, gitExecutable);
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
   const ignoredFiles = [];
@@ -255,6 +318,10 @@ async function captureState(worktree, env, gitExecutable) {
     status,
     completeStatus,
     hiddenIndexEntries,
+    trackedFiles: {
+      digest: trackedFingerprint.digest("hex"),
+      mismatches: trackedMismatches,
+    },
     ignoredFiles,
   };
 }
@@ -390,6 +457,11 @@ async function runPreflight(options) {
       hiddenIndexEntries: before.hiddenIndexEntries,
     });
   }
+  if (before.trackedFiles.mismatches.length > 0) {
+    return block(outcome, "dirty_worktree", "Tracked worktree contents do not exactly match the index.", {
+      trackedFiles: before.trackedFiles.mismatches,
+    });
+  }
 
   const baseResult = await git(outcome.worktree, [
     "rev-parse", "--verify", "--quiet", "--end-of-options", `${outcome.base.reference}^{commit}`,
@@ -432,6 +504,8 @@ async function runPreflight(options) {
     "--ignore-rules",
     "--config", "features.hooks=false",
     "--config", "skills.include_instructions=false",
+    "--config", "shell_environment_policy.inherit=\"none\"",
+    "--config", `shell_environment_policy.set={ PATH = ${JSON.stringify(processEnv[Object.keys(processEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH"] ?? "")} }`,
     "--config", `projects.${JSON.stringify(outcome.worktree)}.trust_level="untrusted"`,
     "--cd", outcome.worktree,
     "review",
@@ -469,10 +543,12 @@ async function runPreflight(options) {
     outcome.readOnly.headUnchanged = before.head === after.head;
     outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
     outcome.readOnly.indexFlagsUnchanged = JSON.stringify(before.hiddenIndexEntries) === JSON.stringify(after.hiddenIndexEntries);
+    outcome.readOnly.trackedFilesUnchanged = JSON.stringify(before.trackedFiles) === JSON.stringify(after.trackedFiles);
     outcome.readOnly.ignoredFilesUnchanged = JSON.stringify(before.ignoredFiles) === JSON.stringify(after.ignoredFiles);
     outcome.readOnly.verified = outcome.readOnly.headUnchanged
       && outcome.readOnly.statusUnchanged
       && outcome.readOnly.indexFlagsUnchanged
+      && outcome.readOnly.trackedFilesUnchanged
       && outcome.readOnly.ignoredFilesUnchanged;
   } catch (error) {
     return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
@@ -484,7 +560,7 @@ async function runPreflight(options) {
   if (!parsed.error) outcome.reviewOutput = terminalReviewOutput(parsed.events);
 
   if (!outcome.readOnly.verified) {
-    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, hidden index flags, or ignored file contents changed during review.", {
+    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, tracked file contents, hidden index flags, or ignored file contents changed during review.", {
       before,
       after,
     });
