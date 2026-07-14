@@ -90,10 +90,9 @@ async function installFakeCodex(root, options = {}) {
   const bin = path.join(root, "bin");
   const log = path.join(root, "codex-invocations.jsonl");
   await mkdir(bin);
-  const executable = path.join(bin, "codex");
+  const executable = path.join(bin, process.platform === "win32" ? "codex.cmd" : "codex");
   const homeLog = path.join(root, "codex-home.txt");
-  await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+  const source = `import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -172,6 +171,14 @@ if (mode === "missing-output") {
   console.log(JSON.stringify({ type: "turn.completed" }));
   process.exit(0);
 }
+if (mode === "missing-lifecycle-starts") {
+  console.log(JSON.stringify({
+    type: "item.completed",
+    item: { id: "item_0", type: "agent_message", text: "incomplete review" },
+  }));
+  console.log(JSON.stringify({ type: "turn.completed" }));
+  process.exit(0);
+}
 if (mode === "mutate-status") {
   writeFileSync(new URL("codex-created.txt", "file://" + worktree + "/"), "mutation\\n");
 }
@@ -197,6 +204,9 @@ if (mode === "mutate-tracked-with-restored-mtime") {
   const contents = readFileSync(file, "utf8");
   writeFileSync(file, (contents[0] === "X" ? "Y" : "X") + contents.slice(1));
   utimesSync(file, before.atime, before.mtime);
+}
+if (mode === "mutate-custom-filtered") {
+  writeFileSync(new URL("custom.txt", "file://" + worktree + "/"), "mutation\\n");
 }
 if (mode === "mutate-submodule") {
   writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
@@ -228,7 +238,17 @@ console.log(JSON.stringify({
 }));
 if (mode === "premature-eof") process.exit(0);
 console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 8 } }));
-`);
+if (mode === "trailing-unfinished-turn") {
+  console.log(JSON.stringify({ type: "turn.started" }));
+}
+`;
+  if (process.platform === "win32") {
+    const script = path.join(bin, "fake-codex.mjs");
+    await writeFile(script, source);
+    await writeFile(executable, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    await writeFile(executable, `#!/usr/bin/env node\n${source}`);
+  }
   await chmod(executable, 0o755);
   return { bin, executable, homeLog, log };
 }
@@ -638,7 +658,7 @@ test("blocks CRLF bytes that Git reports dirty for an LF checkout", async () => 
   });
 });
 
-test("blocks working-tree encodings that require Git conversion", async () => {
+test("allows Git-clean working-tree encodings while retaining raw state evidence", async () => {
   await withFixture(async (fixture) => {
     await writeFile(
       path.join(fixture.repo, ".gitattributes"),
@@ -655,17 +675,15 @@ test("blocks working-tree encodings that require Git conversion", async () => {
 
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_attributes");
-    assert.deepEqual(outcome.blocker.evidence.paths, [{
-      path: "script.ps1",
-      attributes: { "working-tree-encoding": "UTF-16LE" },
-    }]);
-    assert.equal(await invocationCount(fake.log), 0);
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.readOnly.verified, true);
+    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
+    assert.equal(await invocationCount(fake.log), 1);
   });
 });
 
-test("blocks ident expansion instead of treating a clean file as dirty", async () => {
+test("allows Git-clean ident expansion while retaining raw state evidence", async () => {
   await withFixture(async (fixture) => {
     await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt ident\n");
     await writeFile(path.join(fixture.repo, "file.txt"), "candidate\n$Id$\n");
@@ -679,13 +697,11 @@ test("blocks ident expansion instead of treating a clean file as dirty", async (
 
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_attributes");
-    assert.deepEqual(outcome.blocker.evidence.paths, [{
-      path: "file.txt",
-      attributes: { ident: "set" },
-    }]);
-    assert.equal(await invocationCount(fake.log), 0);
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.readOnly.verified, true);
+    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
+    assert.equal(await invocationCount(fake.log), 1);
   });
 });
 
@@ -760,7 +776,7 @@ process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\
   });
 });
 
-test("blocks custom-filter attributes without invoking their clean command", {
+test("allows Git-clean custom-filter attributes without invoking their clean command", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -786,13 +802,19 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
 
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
-    assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "unsupported_attributes");
-    assert.deepEqual(outcome.blocker.evidence.paths, [{
-      path: "custom.txt",
-      attributes: { filter: "uppercase" },
-    }]);
-    assert.equal(await invocationCount(fake.log), 0);
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.readOnly.verified, true);
+    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
+    assert.equal(await invocationCount(fake.log), 1);
+    await assert.rejects(readFile(log), { code: "ENOENT" });
+
+    await rm(fake.bin, { recursive: true });
+    const mutation = await invokeRunner(fixture, { mode: "mutate-custom-filtered" });
+    assert.equal(mutation.processResult.exitCode, 1);
+    assert.equal(mutation.outcome.blocker.code, "repository_mutated");
+    assert.equal(mutation.outcome.readOnly.statusUnchanged, true);
+    assert.equal(mutation.outcome.readOnly.trackedFilesUnchanged, false);
     await assert.rejects(readFile(log), { code: "ENOENT" });
   });
 });
@@ -1129,6 +1151,28 @@ test("blocks premature EOF after an agent message", async () => {
     assert.equal(outcome.reviewOutput, null);
     assert.match(outcome.command.stdout, /agent_message/);
     assert.doesNotMatch(outcome.command.stdout, /turn\.completed/);
+  });
+});
+
+test("blocks terminal output without lifecycle starts", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "missing-lifecycle-starts" });
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "missing_terminal_output");
+    assert.equal(outcome.reviewOutput, null);
+    assert.match(outcome.command.stdout, /agent_message/);
+    assert.doesNotMatch(outcome.command.stdout, /turn\.started/);
+  });
+});
+
+test("blocks a trailing unfinished turn after terminal output", async () => {
+  await withFixture(async (fixture) => {
+    const { processResult, outcome } = await invokeRunner(fixture, { mode: "trailing-unfinished-turn" });
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "missing_terminal_output");
+    assert.equal(outcome.reviewOutput, null);
+    assert.match(outcome.command.stdout, /agent_message/);
+    assert.match(outcome.command.stdout, /turn\.completed[^]*turn\.started/);
   });
 });
 

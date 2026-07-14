@@ -67,14 +67,34 @@ function parseArgs(argv) {
 
 function runProcess(command, args, options = {}) {
   return new Promise((resolve) => {
+    let invocation = { command, args, windowsVerbatimArguments: false };
+    if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command)) {
+      const metaCharacters = /([()\][%!^"`<>&|;, *?])/g;
+      const escapeCommand = (value) => value.replace(metaCharacters, "^$1");
+      const escapeArgument = (value) => {
+        let escaped = `${value}`
+          .replace(/(?=(\\+?)?)\1"/g, "$1$1\\\"")
+          .replace(/(?=(\\+?)?)\1$/, "$1$1");
+        escaped = `"${escaped}"`.replace(metaCharacters, "^$1");
+        return escaped;
+      };
+      const shellCommand = [escapeCommand(command), ...args.map(escapeArgument)].join(" ");
+      const comspecKey = Object.keys(options.env ?? {}).find((key) => key.toUpperCase() === "COMSPEC");
+      invocation = {
+        command: comspecKey ? options.env[comspecKey] : "cmd.exe",
+        args: ["/d", "/s", "/c", `"${shellCommand}"`],
+        windowsVerbatimArguments: true,
+      };
+    }
     const rawStdout = options.stdoutEncoding === null;
     let stdout = rawStdout ? [] : "";
     let stderr = "";
     let settled = false;
-    const child = spawn(command, args, {
+    const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
     if (options.input !== undefined) child.stdin.end(options.input);
     if (!rawStdout) child.stdout?.setEncoding("utf8");
@@ -406,17 +426,14 @@ async function captureState(worktree, env, gitExecutable) {
   const trackedFingerprint = createHash("sha256");
   const trackedMismatches = [];
   const safelySmudgedLfsPaths = new Set();
-  const unsupportedAttributes = [];
+  const externallyFilteredPaths = new Set();
   for (const { expectedMode, expectedOid, stage, relativePath } of trackedEntries) {
     const attributes = attributesByPath.get(relativePath);
-    const unsupported = {};
-    if (!["unspecified", "unset"].includes(attributes["working-tree-encoding"])) {
-      unsupported["working-tree-encoding"] = attributes["working-tree-encoding"];
-    }
-    if (!["unspecified", "unset"].includes(attributes.ident)) unsupported.ident = attributes.ident;
-    if (!["unspecified", "unset", "lfs"].includes(attributes.filter)) unsupported.filter = attributes.filter;
-    if (Object.keys(unsupported).length > 0) {
-      unsupportedAttributes.push({ path: relativePath, attributes: unsupported });
+    const contentComparable = ["unspecified", "unset"].includes(attributes["working-tree-encoding"])
+      && ["unspecified", "unset"].includes(attributes.ident)
+      && ["unspecified", "unset", "lfs"].includes(attributes.filter);
+    if (!["unspecified", "unset", "lfs"].includes(attributes.filter)) {
+      externallyFilteredPaths.add(relativePath);
     }
     let actualMode = "missing";
     let filesystemMode = null;
@@ -498,7 +515,7 @@ async function captureState(worktree, env, gitExecutable) {
       worktreeDigest,
     };
     trackedFingerprint.update(`${JSON.stringify(fingerprintEntry)}\n`);
-    if (stage !== "0" || actualMode !== expectedMode || canonicalOid !== expectedOid) {
+    if (stage !== "0" || actualMode !== expectedMode || (contentComparable && canonicalOid !== expectedOid)) {
       trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
     }
   }
@@ -525,7 +542,8 @@ async function captureState(worktree, env, gitExecutable) {
   const completeStatus = statusOutput
     .split("\0")
     .filter((record) => record
-      && !(record.startsWith(" M ") && safelySmudgedLfsPaths.has(record.slice(3))))
+      && !(record.startsWith(" M ")
+        && (safelySmudgedLfsPaths.has(record.slice(3)) || externallyFilteredPaths.has(record.slice(3)))))
     .map((record) => `${record}\0`)
     .join("");
   const status = completeStatus
@@ -563,7 +581,6 @@ async function captureState(worktree, env, gitExecutable) {
     status,
     completeStatus,
     hiddenIndexEntries,
-    unsupportedAttributes,
     trackedFiles: {
       digest: trackedFingerprint.digest("hex"),
       mismatches: trackedMismatches,
@@ -606,15 +623,34 @@ function parseEvents(stdout) {
 }
 
 function terminalReviewOutput(events) {
-  const outputIndex = events.findLastIndex((event) =>
-    event.type === "item.completed"
-      && event.item?.type === "agent_message"
-      && typeof event.item.text === "string"
-      && event.item.text.trim());
-  if (outputIndex === -1) return null;
+  let lifecycle = "waitingForThread";
+  let currentTurnOutput = null;
+  let terminalOutput = null;
 
-  const turnCompleted = events.slice(outputIndex + 1).some((event) => event.type === "turn.completed");
-  return turnCompleted ? events[outputIndex].item.text : null;
+  for (const event of events) {
+    if (event.type === "thread.started") {
+      if (lifecycle !== "waitingForThread") return null;
+      lifecycle = "waitingForTurn";
+    } else if (event.type === "turn.started") {
+      if (lifecycle !== "waitingForTurn") return null;
+      lifecycle = "inTurn";
+      currentTurnOutput = null;
+    } else if (event.type.startsWith("item.")) {
+      if (lifecycle !== "inTurn") return null;
+      if (event.type === "item.completed"
+          && event.item?.type === "agent_message"
+          && typeof event.item.text === "string"
+          && event.item.text.trim()) {
+        currentTurnOutput = event.item.text;
+      }
+    } else if (event.type === "turn.completed") {
+      if (lifecycle !== "inTurn") return null;
+      lifecycle = "waitingForTurn";
+      terminalOutput = currentTurnOutput;
+    }
+  }
+
+  return lifecycle === "waitingForTurn" ? terminalOutput : null;
 }
 
 function eventFailure(events) {
@@ -702,11 +738,6 @@ async function runPreflight(options) {
   if (before.hiddenIndexEntries.length > 0) {
     return block(outcome, "dirty_worktree", "Worktree cleanliness cannot be verified while tracked paths use hidden index flags.", {
       hiddenIndexEntries: before.hiddenIndexEntries,
-    });
-  }
-  if (before.unsupportedAttributes.length > 0) {
-    return block(outcome, "unsupported_attributes", "Tracked paths use conversions that cannot be verified without reimplementing Git or invoking configured helpers.", {
-      paths: before.unsupportedAttributes,
     });
   }
   if (before.status !== "") {
