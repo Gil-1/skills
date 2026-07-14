@@ -224,17 +224,21 @@ test("runs one pinned read-only review and preserves its complete findings", asy
     assert.deepEqual(invocations[0], ["--version"]);
     assert.equal(invocations.filter(([command]) => command === "exec").length, 1);
     const reviewArgs = invocations[1];
-    assert.deepEqual(reviewArgs.slice(0, -1), [
+    assert.deepEqual(reviewArgs.slice(0, 8), [
       "exec", "--sandbox", "read-only", "--ephemeral", "--json",
-      "--config", "features.hooks=false", "--cd", fixture.repo,
-      "review", "--base", fixture.baseHead,
+      "--config", "features.hooks=false", "--config",
     ]);
-    const prompt = reviewArgs.at(-1);
+    assert.match(reviewArgs[8], /^developer_instructions=/);
+    assert.deepEqual(reviewArgs.slice(9), [
+      "--cd", fixture.repo, "review", "--base", fixture.baseHead,
+    ]);
+    const prompt = JSON.parse(reviewArgs[8].slice("developer_instructions=".length));
     assert.match(prompt, /base reference: main/);
     assert.match(prompt, new RegExp(`resolved base SHA: ${fixture.baseHead}`));
     assert.match(prompt, new RegExp(`merge-base SHA: ${fixture.baseHead}`));
     assert.match(prompt, new RegExp(`expected HEAD: ${fixture.expectedHead}`));
     assert.match(prompt, /Do not load or use any skills/i);
+    assert.equal(reviewArgs.at(-1), fixture.baseHead);
     assert.equal(await git(fixture.repo, "status", "--porcelain"), "");
     assert.equal(await git(fixture.repo, "rev-parse", "HEAD"), fixture.expectedHead);
   });

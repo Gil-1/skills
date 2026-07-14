@@ -249,8 +249,9 @@ async function runPreflight(options) {
 
   const args = [
     "exec", "--sandbox", "read-only", "--ephemeral", "--json",
-    "--config", "features.hooks=false", "--cd", outcome.worktree,
-    "review", "--base", outcome.mergeBase, reviewPrompt(outcome),
+    "--config", "features.hooks=false",
+    "--config", `developer_instructions=${JSON.stringify(reviewPrompt(outcome))}`,
+    "--cd", outcome.worktree, "review", "--base", outcome.mergeBase,
   ];
   outcome.reviewedHead = before.head;
   outcome.command.attempted = true;
