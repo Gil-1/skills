@@ -105,6 +105,7 @@ function runProcess(command, args, options = {}) {
     let timeout;
     let hardKillTimeout;
     let resolutionTimeout;
+    let closedResult = null;
     const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env: options.env,
@@ -120,6 +121,13 @@ function runProcess(command, args, options = {}) {
       clearTimeout(resolutionTimeout);
       resolve(result);
     };
+    const result = (exitCode, signal) => ({
+      exitCode,
+      signal,
+      stdout: rawStdout ? Buffer.concat(stdout) : stdout,
+      stderr,
+      error: timedOut ? { code: "ETIMEDOUT", message: "Subprocess execution timed out." } : null,
+    });
     const kill = (signal) => {
       try {
         if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
@@ -150,16 +158,46 @@ function runProcess(command, args, options = {}) {
       });
     });
     child.on("close", (exitCode, signal) => {
-      finish({
-        exitCode,
-        signal,
-        stdout: rawStdout ? Buffer.concat(stdout) : stdout,
-        stderr,
-        error: timedOut ? { code: "ETIMEDOUT", message: "Subprocess execution timed out." } : null,
-      });
+      closedResult = result(exitCode, signal);
+      if (!(timedOut && process.platform === "win32")) finish(closedResult);
     });
     timeout = setTimeout(() => {
       timedOut = true;
+      if (process.platform === "win32") {
+        const comspecKey = Object.keys(options.env ?? {}).find((key) => key.toUpperCase() === "COMSPEC");
+        const taskkill = path.join(path.dirname(options.env?.[comspecKey]), "taskkill.exe");
+        const terminator = spawn(taskkill, ["/pid", `${child.pid}`, "/t", "/f"], {
+          env: options.env,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        let terminatorSettled = false;
+        const finishTermination = (terminationError = null) => {
+          if (terminatorSettled) return;
+          terminatorSettled = true;
+          clearTimeout(hardKillTimeout);
+          const timedOutResult = closedResult ?? result(null, "SIGKILL");
+          if (terminationError) timedOutResult.terminationError = terminationError;
+          finish(timedOutResult);
+        };
+        terminator.on("error", (error) => {
+          finishTermination({ code: error.code ?? null, message: error.message });
+        });
+        terminator.on("close", (exitCode) => {
+          finishTermination(exitCode === 0 ? null : {
+            code: "TREE_TERMINATION_FAILED",
+            message: `taskkill exited with code ${exitCode}.`,
+          });
+        });
+        hardKillTimeout = setTimeout(() => {
+          terminator.kill();
+          finishTermination({
+            code: "TREE_TERMINATION_TIMEOUT",
+            message: "Windows process-tree termination timed out.",
+          });
+        }, terminationGraceMs * 2);
+        return;
+      }
       kill("SIGTERM");
       hardKillTimeout = setTimeout(() => { kill("SIGKILL"); }, terminationGraceMs);
       resolutionTimeout = setTimeout(() => {
@@ -222,6 +260,13 @@ async function sanitizedProcessEnvironment(worktree) {
   }
   env[pathKey] = safePath.join(path.delimiter);
 
+  if (process.platform === "win32") {
+    const comspecKey = Object.keys(env).find((key) => key.toUpperCase() === "COMSPEC") ?? "COMSPEC";
+    const trustedComspec = await resolveExecutable("cmd", env, worktree);
+    if (!trustedComspec) throw new Error("The Windows command interpreter was not found outside the candidate worktree.");
+    env[comspecKey] = trustedComspec;
+  }
+
   const gitExecutable = await resolveExecutable("git", env, worktree);
   if (!gitExecutable) throw new Error("Git was not found outside the candidate worktree.");
   const result = await runProcess(gitExecutable, ["rev-parse", "--local-env-vars"], { env });
@@ -276,6 +321,22 @@ async function persistAuthRefresh(authBridge) {
     readFile(authBridge.isolatedAuth),
   ]);
   if (!isolatedAuth.equals(authBridge.authSnapshot) && callerAuth.equals(authBridge.authSnapshot)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(isolatedAuth.toString("utf8"));
+    } catch {
+      throw new Error("Codex wrote an invalid auth.json refresh.");
+    }
+    const hasAuthMaterial = parsed && typeof parsed === "object" && !Array.isArray(parsed) && [
+      parsed.OPENAI_API_KEY,
+      parsed.tokens,
+      parsed.agent_identity,
+      parsed.personal_access_token,
+      parsed.bedrock_api_key,
+    ].some((value) => value && (typeof value === "object" || typeof value === "string"));
+    if (!hasAuthMaterial) {
+      throw new Error("Codex wrote an invalid auth.json refresh.");
+    }
     await copyFile(authBridge.isolatedAuth, authBridge.callerAuth);
   }
 }
@@ -854,95 +915,95 @@ async function runPreflight(options) {
 
   outcome.command.attempted = true;
   let result;
-  let cleanupError = null;
   try {
     result = await runProcess(codexExecutable, args, { env: isolated.env, timeoutMs: reviewTimeoutMs });
-  } finally {
+    Object.assign(outcome.command, result);
+
+    let after;
+    try {
+      after = await captureState(outcome.worktree, processEnv, gitExecutable);
+      outcome.readOnly.after = after;
+      outcome.readOnly.headUnchanged = before.head === after.head;
+      outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
+      outcome.readOnly.indexFlagsUnchanged = JSON.stringify(before.hiddenIndexEntries) === JSON.stringify(after.hiddenIndexEntries);
+      outcome.readOnly.trackedFilesUnchanged = JSON.stringify(before.trackedFiles) === JSON.stringify(after.trackedFiles);
+      outcome.readOnly.ignoredFilesUnchanged = JSON.stringify(before.ignoredFiles) === JSON.stringify(after.ignoredFiles);
+      outcome.readOnly.verified = outcome.readOnly.headUnchanged
+        && outcome.readOnly.statusUnchanged
+        && outcome.readOnly.indexFlagsUnchanged
+        && outcome.readOnly.trackedFilesUnchanged
+        && outcome.readOnly.ignoredFilesUnchanged;
+    } catch (error) {
+      return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
+        error: error.message,
+      });
+    }
+
+    const parsed = parseEvents(result.stdout);
+    if (!parsed.error) outcome.reviewOutput = terminalReviewOutput(parsed.events);
+
+    if (!outcome.readOnly.verified) {
+      return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, tracked file contents, hidden index flags, or ignored file contents changed during review.", {
+        before,
+        after,
+      });
+    }
+    if (result.error?.code === "ENOENT") {
+      return block(outcome, "codex_missing", "Codex CLI disappeared before review execution.", result.error);
+    }
+    if (result.error?.code === "ETIMEDOUT") {
+      return block(outcome, "codex_timeout", "Codex review exceeded the 30-minute execution limit.", {
+        exitCode: result.exitCode,
+        signal: result.signal,
+        error: result.error,
+        terminationError: result.terminationError ?? null,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      });
+    }
+    if (result.error || result.exitCode !== 0 || result.signal) {
+      const [code, message] = commandBlocker(result);
+      return block(outcome, code, message, {
+        exitCode: result.exitCode,
+        signal: result.signal,
+        error: result.error,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      });
+    }
+    if (parsed.error) {
+      return block(outcome, "malformed_events", "Codex did not emit valid JSON events.", { error: parsed.error });
+    }
+    const failedEvent = eventFailure(parsed.events);
+    if (failedEvent) {
+      return block(outcome, "codex_event_error", "Codex emitted a failure event.", { event: failedEvent });
+    }
+    if (!outcome.reviewOutput) {
+      return block(outcome, "missing_terminal_output", "Codex emitted no complete terminal review message.", {
+        eventCount: parsed.events.length,
+      });
+    }
+
     try {
       await persistAuthRefresh(isolated.authBridge);
     } catch (error) {
-      cleanupError = error;
+      return block(outcome, "environment_failed", "Could not persist a valid isolated Codex authentication refresh.", {
+        error: error.message,
+      });
     }
+
+    outcome.status = "passed";
+    outcome.blocker = null;
+    return outcome;
+  } finally {
     try {
       await rm(isolated.codexHome, { recursive: true, force: true });
     } catch (error) {
-      cleanupError ??= error;
+      block(outcome, "environment_failed", "Could not remove the isolated Codex home.", {
+        error: error.message,
+      });
     }
   }
-  Object.assign(outcome.command, result);
-
-  let after;
-  try {
-    after = await captureState(outcome.worktree, processEnv, gitExecutable);
-    outcome.readOnly.after = after;
-    outcome.readOnly.headUnchanged = before.head === after.head;
-    outcome.readOnly.statusUnchanged = before.completeStatus === after.completeStatus;
-    outcome.readOnly.indexFlagsUnchanged = JSON.stringify(before.hiddenIndexEntries) === JSON.stringify(after.hiddenIndexEntries);
-    outcome.readOnly.trackedFilesUnchanged = JSON.stringify(before.trackedFiles) === JSON.stringify(after.trackedFiles);
-    outcome.readOnly.ignoredFilesUnchanged = JSON.stringify(before.ignoredFiles) === JSON.stringify(after.ignoredFiles);
-    outcome.readOnly.verified = outcome.readOnly.headUnchanged
-      && outcome.readOnly.statusUnchanged
-      && outcome.readOnly.indexFlagsUnchanged
-      && outcome.readOnly.trackedFilesUnchanged
-      && outcome.readOnly.ignoredFilesUnchanged;
-  } catch (error) {
-    return block(outcome, "postflight_verification_failed", "Repository state could not be verified after Codex ran.", {
-      error: error.message,
-    });
-  }
-
-  const parsed = parseEvents(result.stdout);
-  if (!parsed.error) outcome.reviewOutput = terminalReviewOutput(parsed.events);
-
-  if (!outcome.readOnly.verified) {
-    return block(outcome, "repository_mutated", "Repository HEAD, complete worktree status, tracked file contents, hidden index flags, or ignored file contents changed during review.", {
-      before,
-      after,
-    });
-  }
-  if (cleanupError) {
-    return block(outcome, "environment_failed", "Could not finalize the isolated Codex authentication or home.", {
-      error: cleanupError.message,
-    });
-  }
-  if (result.error?.code === "ENOENT") {
-    return block(outcome, "codex_missing", "Codex CLI disappeared before review execution.", result.error);
-  }
-  if (result.error?.code === "ETIMEDOUT") {
-    return block(outcome, "codex_timeout", "Codex review exceeded the 30-minute execution limit.", {
-      exitCode: result.exitCode,
-      signal: result.signal,
-      error: result.error,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    });
-  }
-  if (result.error || result.exitCode !== 0 || result.signal) {
-    const [code, message] = commandBlocker(result);
-    return block(outcome, code, message, {
-      exitCode: result.exitCode,
-      signal: result.signal,
-      error: result.error,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    });
-  }
-  if (parsed.error) {
-    return block(outcome, "malformed_events", "Codex did not emit valid JSON events.", { error: parsed.error });
-  }
-  const failedEvent = eventFailure(parsed.events);
-  if (failedEvent) {
-    return block(outcome, "codex_event_error", "Codex emitted a failure event.", { event: failedEvent });
-  }
-  if (!outcome.reviewOutput) {
-    return block(outcome, "missing_terminal_output", "Codex emitted no complete terminal review message.", {
-      eventCount: parsed.events.length,
-    });
-  }
-
-  outcome.status = "passed";
-  outcome.blocker = null;
-  return outcome;
 }
 
 async function main() {
