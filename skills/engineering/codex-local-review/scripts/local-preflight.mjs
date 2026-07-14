@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { access, copyFile, link, lstat, mkdtemp, readFile, readdir, readlink, realpath, rm } from "node:fs/promises";
+import { access, copyFile, lstat, mkdtemp, readFile, readdir, readlink, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -170,11 +170,7 @@ async function isolatedCodexEnvironment(env, worktree) {
   let authSnapshot = null;
   try {
     authSnapshot = await readFile(callerAuth);
-    try {
-      await link(callerAuth, isolatedAuth);
-    } catch {
-      await copyFile(callerAuth, isolatedAuth, constants.COPYFILE_EXCL);
-    }
+    await copyFile(callerAuth, isolatedAuth, constants.COPYFILE_EXCL);
   } catch (error) {
     if (error.code !== "ENOENT") {
       await rm(codexHome, { recursive: true, force: true });

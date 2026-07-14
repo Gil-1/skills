@@ -105,6 +105,10 @@ if (mode === "check-isolated-home" || mode === "refresh-auth") {
   }
   if (mode === "refresh-auth") {
     writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "refreshed-auth\\n");
+    if (readFileSync(path.join(callerCodexHome, "auth.json"), "utf8") !== "test-auth\\n") {
+      console.error("Codex changed caller authentication before controlled refresh persistence");
+      process.exit(12);
+    }
   }
 }
 if (mode === "check-git-environment") {
@@ -390,7 +394,7 @@ test("removes ambient secrets while retaining non-interactive Codex authenticati
   });
 });
 
-test("isolates global instructions while retaining caller authentication", async () => {
+test("isolates caller authentication until a Codex refresh is persisted", async () => {
   await withFixture(async (fixture) => {
     const codexHome = path.join(fixture.root, "caller-codex-home");
     await mkdir(codexHome);
