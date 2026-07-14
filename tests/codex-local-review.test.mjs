@@ -74,6 +74,12 @@ if (args[0] === "--version") {
 
 const mode = process.env.FAKE_CODEX_MODE || "success";
 const worktree = args[args.indexOf("--cd") + 1];
+if (mode === "require-eof") {
+  await new Promise((resolve) => {
+    process.stdin.resume();
+    process.stdin.once("end", resolve);
+  });
+}
 if (mode === "nonzero") {
   console.error("review process failed");
   process.exit(7);
@@ -220,9 +226,9 @@ test("runs one pinned read-only review and preserves its complete findings", asy
     const reviewArgs = invocations[1];
     assert.deepEqual(reviewArgs.slice(0, -1), [
       "exec", "--sandbox", "read-only", "--ephemeral", "--json",
-      "--config", "features.hooks=false", "--cd", fixture.repo, "review",
+      "--config", "features.hooks=false", "--cd", fixture.repo,
+      "review", "--base", fixture.baseHead,
     ]);
-    assert.equal(reviewArgs.includes("--base"), false);
     const prompt = reviewArgs.at(-1);
     assert.match(prompt, /base reference: main/);
     assert.match(prompt, new RegExp(`resolved base SHA: ${fixture.baseHead}`));
@@ -231,6 +237,18 @@ test("runs one pinned read-only review and preserves its complete findings", asy
     assert.match(prompt, /Do not load or use any skills/i);
     assert.equal(await git(fixture.repo, "status", "--porcelain"), "");
     assert.equal(await git(fixture.repo, "rev-parse", "HEAD"), fixture.expectedHead);
+  });
+});
+
+test("closes Codex stdin before review", async () => {
+  await withFixture(async (fixture) => {
+    const { outcome, result } = await invokeRunner(fixture, {
+      mode: "require-eof",
+      env: { CODEX_LOCAL_REVIEW_TIMEOUT_MS: "500" },
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.command.timedOut, false);
   });
 });
 

@@ -86,7 +86,7 @@ function runProcess(command, args, options = {}) {
           args: ["/d", "/s", "/c", "codex.cmd", ...args],
         }
       : { command, args };
-    execFile(invocation.command, invocation.args, {
+    const child = execFile(invocation.command, invocation.args, {
       env: process.env,
       encoding: "utf8",
       maxBuffer: 50 * 1024 * 1024,
@@ -105,6 +105,7 @@ function runProcess(command, args, options = {}) {
           : null,
       });
     });
+    child.stdin?.end();
   });
 }
 
@@ -244,7 +245,8 @@ async function runPreflight(options) {
 
   const args = [
     "exec", "--sandbox", "read-only", "--ephemeral", "--json",
-    "--config", "features.hooks=false", "--cd", outcome.worktree, "review", reviewPrompt(outcome),
+    "--config", "features.hooks=false", "--cd", outcome.worktree,
+    "review", "--base", outcome.mergeBase, reviewPrompt(outcome),
   ];
   outcome.reviewedHead = before.head;
   outcome.command.attempted = true;

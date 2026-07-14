@@ -25,7 +25,7 @@ Run exactly one local Codex review pass through the bundled runner. This skill o
 
 - Resolve the repository worktree, require ordinary `git status --porcelain` cleanliness, and verify exact expected HEAD.
 - Resolve the base, compute the merge base, and reject an empty merge-base-to-HEAD diff.
-- Check the Codex CLI version, then run one `codex exec review` with a read-only sandbox, ephemeral session, JSON events, disabled hooks, the candidate worktree, and a custom no-skills prompt naming the pinned target.
+- Check the Codex CLI version, then run one `codex exec review` against the computed merge base with a read-only sandbox, ephemeral session, JSON events, disabled hooks, the candidate worktree, and custom no-skills instructions naming the pinned target.
 - Apply a 30-minute review timeout and require a complete ordered terminal review lifecycle.
 - Compare ordinary HEAD and Git status before and after review. Any change blocks the outcome.
 - Emit one JSON outcome and exit zero only for `status: passed`.
