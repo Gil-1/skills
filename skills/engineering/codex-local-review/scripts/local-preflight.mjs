@@ -28,6 +28,14 @@ class InputError extends Error {
   }
 }
 
+class UnsupportedPathEncodingError extends Error {
+  constructor(source, rawRecordHex) {
+    super(`Git returned a non-UTF-8 path in ${source}.`);
+    this.source = source;
+    this.rawRecordHex = rawRecordHex;
+  }
+}
+
 function parseArgs(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -59,7 +67,8 @@ function parseArgs(argv) {
 
 function runProcess(command, args, options = {}) {
   return new Promise((resolve) => {
-    let stdout = "";
+    const rawStdout = options.stdoutEncoding === null;
+    let stdout = rawStdout ? [] : "";
     let stderr = "";
     let settled = false;
     const child = spawn(command, args, {
@@ -68,9 +77,12 @@ function runProcess(command, args, options = {}) {
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     if (options.input !== undefined) child.stdin.end(options.input);
-    child.stdout?.setEncoding("utf8");
+    if (!rawStdout) child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stdout?.on("data", (chunk) => {
+      if (rawStdout) stdout.push(chunk);
+      else stdout += chunk;
+    });
     child.stderr?.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => {
       if (settled) return;
@@ -78,7 +90,7 @@ function runProcess(command, args, options = {}) {
       resolve({
         exitCode: null,
         signal: null,
-        stdout,
+        stdout: rawStdout ? Buffer.concat(stdout) : stdout,
         stderr,
         error: { code: error.code ?? null, message: error.message },
       });
@@ -86,7 +98,13 @@ function runProcess(command, args, options = {}) {
     child.on("close", (exitCode, signal) => {
       if (settled) return;
       settled = true;
-      resolve({ exitCode, signal, stdout, stderr, error: null });
+      resolve({
+        exitCode,
+        signal,
+        stdout: rawStdout ? Buffer.concat(stdout) : stdout,
+        stderr,
+        error: null,
+      });
     });
   });
 }
@@ -153,8 +171,8 @@ async function sanitizedProcessEnvironment(worktree) {
   return { env, gitExecutable };
 }
 
-async function git(worktree, args, env, gitExecutable) {
-  return runProcess(gitExecutable, ["-C", worktree, "-c", "core.fsmonitor=false", ...args], { env });
+async function git(worktree, args, env, gitExecutable, options = {}) {
+  return runProcess(gitExecutable, ["-C", worktree, "-c", "core.fsmonitor=false", ...args], { env, ...options });
 }
 
 async function isolatedCodexEnvironment(env, worktree) {
@@ -197,11 +215,29 @@ async function persistAuthRefresh(authBridge) {
 }
 
 function commandFailure(result) {
-  return result.error?.message || result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
+  return result.error?.message || result.stderr.trim() || stdout.trim() || `exit code ${result.exitCode}`;
+}
+
+function decodePathOutput(output, source) {
+  let start = 0;
+  while (start < output.length) {
+    const separator = output.indexOf(0, start);
+    const end = separator === -1 ? output.length : separator;
+    const record = output.subarray(start, end);
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(record);
+    } catch {
+      throw new UnsupportedPathEncodingError(source, record.toString("hex"));
+    }
+    if (separator === -1) break;
+    start = separator + 1;
+  }
+  return output.toString("utf8");
 }
 
 async function attributesForPaths(worktree, relativePaths, env, gitExecutable) {
-  const names = ["filter", "text", "eol", "working-tree-encoding"];
+  const names = ["filter", "ident", "text", "eol", "working-tree-encoding"];
   const paths = [...new Set(relativePaths)];
   if (paths.length === 0) return new Map();
   const result = await runProcess(gitExecutable, [
@@ -337,15 +373,17 @@ function block(outcome, code, message, evidence = {}) {
 async function captureState(worktree, env, gitExecutable) {
   const headResult = await git(worktree, ["rev-parse", "HEAD"], env, gitExecutable);
   if (headResult.exitCode !== 0) throw new Error(`Could not read HEAD: ${commandFailure(headResult)}`);
-  const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env, gitExecutable);
+  const indexResult = await git(worktree, ["ls-files", "-v", "-z"], env, gitExecutable, { stdoutEncoding: null });
   if (indexResult.exitCode !== 0) throw new Error(`Could not inspect index flags: ${commandFailure(indexResult)}`);
-  const hiddenIndexEntries = indexResult.stdout
+  const indexOutput = decodePathOutput(indexResult.stdout, "index flags");
+  const hiddenIndexEntries = indexOutput
     .split("\0")
     .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith("S ")))
     .sort();
-  const stagedResult = await git(worktree, ["ls-files", "--stage", "-z"], env, gitExecutable);
+  const stagedResult = await git(worktree, ["ls-files", "--stage", "-z"], env, gitExecutable, { stdoutEncoding: null });
   if (stagedResult.exitCode !== 0) throw new Error(`Could not inspect tracked files: ${commandFailure(stagedResult)}`);
-  const trackedEntries = stagedResult.stdout.split("\0").filter(Boolean).map((entry) => {
+  const stagedOutput = decodePathOutput(stagedResult.stdout, "tracked files");
+  const trackedEntries = stagedOutput.split("\0").filter(Boolean).map((entry) => {
     const separator = entry.indexOf("\t");
     const metadata = separator === -1 ? [] : entry.slice(0, separator).split(" ");
     if (metadata.length !== 3 || !/^\d+$/.test(metadata[0]) || !/^[0-9a-f]+$/.test(metadata[1])) {
@@ -368,7 +406,18 @@ async function captureState(worktree, env, gitExecutable) {
   const trackedFingerprint = createHash("sha256");
   const trackedMismatches = [];
   const safelyCanonicalizedPaths = new Set();
+  const unsupportedAttributes = [];
   for (const { expectedMode, expectedOid, stage, relativePath } of trackedEntries) {
+    const attributes = attributesByPath.get(relativePath);
+    const unsupported = {};
+    if (!["unspecified", "unset"].includes(attributes["working-tree-encoding"])) {
+      unsupported["working-tree-encoding"] = attributes["working-tree-encoding"];
+    }
+    if (!["unspecified", "unset"].includes(attributes.ident)) unsupported.ident = attributes.ident;
+    if (!["unspecified", "unset", "lfs"].includes(attributes.filter)) unsupported.filter = attributes.filter;
+    if (Object.keys(unsupported).length > 0) {
+      unsupportedAttributes.push({ path: relativePath, attributes: unsupported });
+    }
     let actualMode = "missing";
     let filesystemMode = null;
     let canonicalOid = null;
@@ -399,8 +448,10 @@ async function captureState(worktree, env, gitExecutable) {
         }
       } else if (stats.isSymbolicLink()) {
         actualMode = "120000";
-        const target = await readlink(absolutePath);
-        const hashResult = await runProcess(gitExecutable, ["hash-object", "--stdin"], { env, input: target });
+        const target = await readlink(absolutePath, { encoding: "buffer" });
+        const hashResult = await git(worktree, ["hash-object", "--no-filters", "--stdin"], env, gitExecutable, {
+          input: target,
+        });
         if (hashResult.exitCode !== 0) throw new Error(commandFailure(hashResult));
         canonicalOid = hashResult.stdout.trim();
         worktreeDigest = createHash("sha256").update(target).digest("hex");
@@ -422,7 +473,6 @@ async function captureState(worktree, env, gitExecutable) {
         }
         worktreeDigest = hash.digest("hex");
         if (canonicalOid !== expectedOid) {
-          const attributes = attributesByPath.get(relativePath);
           if (attributes.filter === "lfs"
               && await matchesLfsPointer(worktree, expectedOid, worktreeDigest, stats.size, env, gitExecutable)) {
             canonicalOid = expectedOid;
@@ -469,9 +519,10 @@ async function captureState(worktree, env, gitExecutable) {
     ...filterOverrides,
     "-c", "core.fileMode=true",
     "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
-  ], env, gitExecutable);
+  ], env, gitExecutable, { stdoutEncoding: null });
   if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
-  const completeStatus = statusResult.stdout
+  const statusOutput = decodePathOutput(statusResult.stdout, "worktree status");
+  const completeStatus = statusOutput
     .split("\0")
     .filter((record) => record
       && !(record.startsWith(" M ") && safelyCanonicalizedPaths.has(record.slice(3))))
@@ -482,10 +533,17 @@ async function captureState(worktree, env, gitExecutable) {
     .filter((record) => record && !record.startsWith("!! "))
     .map((record) => `${record}\0`)
     .join("");
-  const ignoredResult = await git(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], env, gitExecutable);
+  const ignoredResult = await git(
+    worktree,
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+    env,
+    gitExecutable,
+    { stdoutEncoding: null },
+  );
   if (ignoredResult.exitCode !== 0) throw new Error(`Could not list ignored files: ${commandFailure(ignoredResult)}`);
+  const ignoredOutput = decodePathOutput(ignoredResult.stdout, "ignored files");
   const ignoredFiles = [];
-  for (const relativePath of ignoredResult.stdout.split("\0").filter(Boolean).sort()) {
+  for (const relativePath of ignoredOutput.split("\0").filter(Boolean).sort()) {
     const absolutePath = path.join(worktree, relativePath);
     const stats = await lstat(absolutePath);
     const hash = createHash("sha256");
@@ -505,6 +563,7 @@ async function captureState(worktree, env, gitExecutable) {
     status,
     completeStatus,
     hiddenIndexEntries,
+    unsupportedAttributes,
     trackedFiles: {
       digest: trackedFingerprint.digest("hex"),
       mismatches: trackedMismatches,
@@ -623,6 +682,12 @@ async function runPreflight(options) {
   try {
     before = await captureState(outcome.worktree, processEnv, gitExecutable);
   } catch (error) {
+    if (error instanceof UnsupportedPathEncodingError) {
+      return block(outcome, "unsupported_path_encoding", "Repository paths must be valid UTF-8 for lossless state evidence.", {
+        source: error.source,
+        rawRecordHex: error.rawRecordHex,
+      });
+    }
     return block(outcome, "invalid_target", "Could not inspect the candidate repository.", { error: error.message });
   }
   outcome.actualHead = before.head;
@@ -634,14 +699,19 @@ async function runPreflight(options) {
       actualHead: before.head,
     });
   }
-  if (before.status !== "") {
-    return block(outcome, "dirty_worktree", "The worktree is not clean, including untracked files.", {
-      status: before.status,
-    });
-  }
   if (before.hiddenIndexEntries.length > 0) {
     return block(outcome, "dirty_worktree", "Worktree cleanliness cannot be verified while tracked paths use hidden index flags.", {
       hiddenIndexEntries: before.hiddenIndexEntries,
+    });
+  }
+  if (before.unsupportedAttributes.length > 0) {
+    return block(outcome, "unsupported_attributes", "Tracked paths use conversions that cannot be verified without reimplementing Git or invoking configured helpers.", {
+      paths: before.unsupportedAttributes,
+    });
+  }
+  if (before.status !== "") {
+    return block(outcome, "dirty_worktree", "The worktree is not clean, including untracked files.", {
+      status: before.status,
     });
   }
   if (before.trackedFiles.mismatches.length > 0) {
@@ -669,7 +739,9 @@ async function runPreflight(options) {
   }
   outcome.mergeBase = mergeBaseResult.stdout.trim();
 
-  const diffResult = await git(outcome.worktree, ["diff", "--quiet", `${outcome.mergeBase}...${before.head}`, "--"], processEnv, gitExecutable);
+  const diffResult = await git(outcome.worktree, [
+    "diff", "--quiet", "--ignore-submodules=none", `${outcome.mergeBase}...${before.head}`, "--",
+  ], processEnv, gitExecutable);
   if (diffResult.exitCode === 0) {
     return block(outcome, "empty_diff", "The merge diff is empty.", {
       mergeBase: outcome.mergeBase,

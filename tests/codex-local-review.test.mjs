@@ -32,11 +32,23 @@ async function git(repo, ...args) {
   return result.stdout.trim();
 }
 
-async function createRepository({ candidate = true } = {}) {
+async function gitWithoutInheritedConfig(repo, ...args) {
+  const result = await run("git", ["-C", repo, ...args], {
+    env: {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: os.devNull,
+    },
+  });
+  assert.equal(result.exitCode, 0, `isolated git ${args.join(" ")} failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+async function createRepository({ candidate = true, objectFormat = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-local-review-test-"));
   const repo = path.join(root, "repo");
   await mkdir(repo);
-  await git(repo, "init", "-b", "main");
+  await git(repo, "init", "-b", "main", ...(objectFormat ? ["--object-format", objectFormat] : []));
   await git(repo, "config", "user.name", "Test User");
   await git(repo, "config", "user.email", "test@example.com");
   await writeFile(path.join(repo, "file.txt"), "base\n");
@@ -569,6 +581,25 @@ test("allows Git-clean symlinks represented as regular files", async () => {
   });
 });
 
+test("hashes symlink targets with the repository object format", {
+  skip: process.platform === "win32" ? "creating symlinks requires optional Windows privileges" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    await symlink("file.txt", path.join(fixture.repo, "link.txt"));
+    await git(fixture.repo, "add", "link.txt");
+    await git(fixture.repo, "commit", "-m", "add symlink");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(fixture.expectedHead.length, 64);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+  }, { objectFormat: "sha256" });
+});
+
 test("allows clean CRLF worktree bytes normalized to LF in the index", async () => {
   await withFixture(async (fixture) => {
     await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt text eol=crlf\n");
@@ -586,6 +617,82 @@ test("allows clean CRLF worktree bytes normalized to LF in the index", async () 
     assert.equal(processResult.exitCode, 0);
     assert.equal(outcome.status, "passed");
     assert.deepEqual(outcome.readOnly.before.trackedFiles.mismatches, []);
+  });
+});
+
+test("blocks working-tree encodings that require Git conversion", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(
+      path.join(fixture.repo, ".gitattributes"),
+      "*.ps1 text working-tree-encoding=UTF-16LE eol=CRLF\n",
+    );
+    await writeFile(
+      path.join(fixture.repo, "script.ps1"),
+      Buffer.from("Write-Output 'candidate'\r\n", "utf16le"),
+    );
+    await git(fixture.repo, "add", ".gitattributes", "script.ps1");
+    await git(fixture.repo, "commit", "-m", "add encoded script");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "unsupported_attributes");
+    assert.deepEqual(outcome.blocker.evidence.paths, [{
+      path: "script.ps1",
+      attributes: { "working-tree-encoding": "UTF-16LE" },
+    }]);
+    assert.equal(await invocationCount(fake.log), 0);
+  });
+});
+
+test("blocks ident expansion instead of treating a clean file as dirty", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt ident\n");
+    await writeFile(path.join(fixture.repo, "file.txt"), "candidate\n$Id$\n");
+    await git(fixture.repo, "add", ".gitattributes", "file.txt");
+    await git(fixture.repo, "commit", "-m", "add ident expansion");
+    await rm(path.join(fixture.repo, "file.txt"));
+    await git(fixture.repo, "checkout", "--", "file.txt");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.match(await readFile(path.join(fixture.repo, "file.txt"), "utf8"), /\$Id: [0-9a-f]+ \$/);
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "unsupported_attributes");
+    assert.deepEqual(outcome.blocker.evidence.paths, [{
+      path: "file.txt",
+      attributes: { ident: "set" },
+    }]);
+    assert.equal(await invocationCount(fake.log), 0);
+  });
+});
+
+test("blocks paths whose bytes cannot be represented losslessly in JSON", {
+  skip: process.platform === "win32" ? "Windows paths do not expose arbitrary byte names" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const rawPath = Buffer.concat([
+      Buffer.from(`${fixture.repo}${path.sep}raw_`),
+      Buffer.from([0xff]),
+      Buffer.from(".txt"),
+    ]);
+    await writeFile(rawPath, "raw path bytes\n");
+    await git(fixture.repo, "add", "--all");
+    await git(fixture.repo, "commit", "-m", "add non-UTF-8 path");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "unsupported_path_encoding");
+    assert.equal(outcome.blocker.evidence.source, "index flags");
+    assert.match(outcome.blocker.evidence.rawRecordHex, /ff/);
+    assert.equal(await invocationCount(fake.log), 0);
   });
 });
 
@@ -612,10 +719,10 @@ process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\
     await writeFile(path.join(fixture.repo, "asset.bin"), content);
     await git(fixture.repo, "config", "filter.lfs.clean", filter);
     await git(fixture.repo, "config", "filter.lfs.required", "true");
-    await git(fixture.repo, "add", ".gitattributes", "asset.bin");
-    await git(fixture.repo, "commit", "-m", "add LFS content");
+    await gitWithoutInheritedConfig(fixture.repo, "add", ".gitattributes", "asset.bin");
+    await gitWithoutInheritedConfig(fixture.repo, "commit", "-m", "add LFS content");
     fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
-    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+    assert.equal(await gitWithoutInheritedConfig(fixture.repo, "status", "--porcelain=v1"), "");
     await rm(log);
 
     const { processResult, outcome } = await invokeRunner(fixture);
@@ -635,7 +742,7 @@ process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\
   });
 });
 
-test("blocks transformed custom-filter files without invoking their clean command", {
+test("blocks custom-filter attributes without invoking their clean command", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -662,11 +769,11 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
     assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "dirty_worktree");
-    assert.match(
-      outcome.blocker.evidence.status ?? JSON.stringify(outcome.blocker.evidence.trackedFiles),
-      /custom\.txt/,
-    );
+    assert.equal(outcome.blocker.code, "unsupported_attributes");
+    assert.deepEqual(outcome.blocker.evidence.paths, [{
+      path: "custom.txt",
+      attributes: { filter: "uppercase" },
+    }]);
     assert.equal(await invocationCount(fake.log), 0);
     await assert.rejects(readFile(log), { code: "ENOENT" });
   });
@@ -901,6 +1008,49 @@ test("blocks an empty merge diff", async () => {
     const { outcome, fake } = await invokeRunner(fixture);
     assert.equal(outcome.blocker.code, "empty_diff");
     assert.equal(await invocationCount(fake.log), 0);
+  }, { candidate: false });
+});
+
+test("does not hide a gitlink-only merge diff with ignore=all", async () => {
+  await withFixture(async (fixture) => {
+    const source = path.join(fixture.root, "diff-submodule-source");
+    await mkdir(source);
+    await git(source, "init", "-b", "main");
+    await git(source, "config", "user.name", "Test User");
+    await git(source, "config", "user.email", "test@example.com");
+    await writeFile(path.join(source, "file.txt"), "base\n");
+    await git(source, "add", "file.txt");
+    await git(source, "commit", "-m", "submodule base");
+
+    await git(fixture.repo, "switch", "main");
+    await git(fixture.repo, "-c", "protocol.file.allow=always", "submodule", "add", source, "dep");
+    await git(fixture.repo, "config", "-f", ".gitmodules", "submodule.dep.ignore", "all");
+    await git(fixture.repo, "add", ".gitmodules", "dep");
+    await git(fixture.repo, "commit", "-m", "add ignored submodule");
+    fixture.baseHead = await git(fixture.repo, "rev-parse", "HEAD");
+    await git(fixture.repo, "branch", "-f", "ticket", "main");
+    await git(fixture.repo, "switch", "ticket");
+
+    await writeFile(path.join(source, "file.txt"), "base\nupdated\n");
+    await git(source, "add", "file.txt");
+    await git(source, "commit", "-m", "submodule update");
+    const updatedSubmoduleHead = await git(source, "rev-parse", "HEAD");
+    await git(path.join(fixture.repo, "dep"), "fetch", "origin");
+    await git(path.join(fixture.repo, "dep"), "checkout", updatedSubmoduleHead);
+    await git(fixture.repo, "add", "dep");
+    await git(fixture.repo, "commit", "-m", "bump ignored submodule");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1"), "");
+    const hiddenDiff = await run("git", [
+      "-C", fixture.repo, "diff", "--quiet", `${fixture.baseHead}...${fixture.expectedHead}`, "--",
+    ]);
+    assert.equal(hiddenDiff.exitCode, 0);
+
+    const { processResult, outcome } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
+    assert.equal(outcome.mergeBase, fixture.baseHead);
   }, { candidate: false });
 });
 
