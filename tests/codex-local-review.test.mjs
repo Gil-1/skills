@@ -620,6 +620,24 @@ test("allows clean CRLF worktree bytes normalized to LF in the index", async () 
   });
 });
 
+test("blocks CRLF bytes that Git reports dirty for an LF checkout", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "file.txt text eol=lf\n");
+    await git(fixture.repo, "add", ".gitattributes");
+    await git(fixture.repo, "commit", "-m", "require LF checkout bytes");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    await writeFile(path.join(fixture.repo, "file.txt"), "base\r\ncandidate\r\n");
+    assert.match(await git(fixture.repo, "status", "--porcelain=v1"), /^M file\.txt/);
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "dirty_worktree");
+    assert.match(outcome.blocker.evidence.status, / M file\.txt/);
+    assert.equal(await invocationCount(fake.log), 0);
+  });
+});
+
 test("blocks working-tree encodings that require Git conversion", async () => {
   await withFixture(async (fixture) => {
     await writeFile(

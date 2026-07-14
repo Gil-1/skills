@@ -405,7 +405,7 @@ async function captureState(worktree, env, gitExecutable) {
   const autocrlf = autocrlfResult.stdout.trim().toLowerCase();
   const trackedFingerprint = createHash("sha256");
   const trackedMismatches = [];
-  const safelyCanonicalizedPaths = new Set();
+  const safelySmudgedLfsPaths = new Set();
   const unsupportedAttributes = [];
   for (const { expectedMode, expectedOid, stage, relativePath } of trackedEntries) {
     const attributes = attributesByPath.get(relativePath);
@@ -476,12 +476,12 @@ async function captureState(worktree, env, gitExecutable) {
           if (attributes.filter === "lfs"
               && await matchesLfsPointer(worktree, expectedOid, worktreeDigest, stats.size, env, gitExecutable)) {
             canonicalOid = expectedOid;
+            safelySmudgedLfsPaths.add(relativePath);
           } else if (["unspecified", "unset"].includes(attributes.filter)
               && usesBuiltInTextNormalization(attributes, autocrlf, containsNul)) {
             const normalizedOid = await crlfNormalizedBlobOid(absolutePath, expectedOid);
             if (normalizedOid === expectedOid) canonicalOid = normalizedOid;
           }
-          if (canonicalOid === expectedOid) safelyCanonicalizedPaths.add(relativePath);
         }
       }
     } catch (error) {
@@ -525,7 +525,7 @@ async function captureState(worktree, env, gitExecutable) {
   const completeStatus = statusOutput
     .split("\0")
     .filter((record) => record
-      && !(record.startsWith(" M ") && safelyCanonicalizedPaths.has(record.slice(3))))
+      && !(record.startsWith(" M ") && safelySmudgedLfsPaths.has(record.slice(3))))
     .map((record) => `${record}\0`)
     .join("");
   const status = completeStatus
