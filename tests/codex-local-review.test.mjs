@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -250,6 +250,42 @@ if (mode === "trailing-unfinished-turn") {
   return { bin, executable, homeLog, log };
 }
 
+async function installGitOnlyPath(root) {
+  const pathValue = Object.entries(process.env)
+    .find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
+  const pathExt = Object.entries(process.env)
+    .find(([name]) => name.toUpperCase() === "PATHEXT")?.[1];
+  const extensions = process.platform === "win32"
+    ? (pathExt ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  let gitExecutable = null;
+  for (const entry of pathValue.split(path.delimiter).filter(Boolean)) {
+    for (const extension of extensions) {
+      const candidate = path.join(entry, `git${extension}`);
+      try {
+        await access(candidate);
+        gitExecutable = candidate;
+        break;
+      } catch {
+        // Continue searching the caller's PATH.
+      }
+    }
+    if (gitExecutable) break;
+  }
+  assert.ok(gitExecutable, "Git must be available to construct the missing-Codex test PATH");
+
+  const bin = path.join(root, "git-only-bin");
+  await mkdir(bin);
+  const shim = path.join(bin, process.platform === "win32" ? "git.cmd" : "git");
+  if (process.platform === "win32") {
+    await writeFile(shim, `@echo off\r\n"${gitExecutable.replaceAll("%", "%%")}" %*\r\n`);
+    await chmod(shim, 0o755);
+  } else {
+    await symlink(gitExecutable, shim);
+  }
+  return bin;
+}
+
 async function invokeRunner(fixture, options = {}) {
   const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root, options);
   const args = [
@@ -258,11 +294,12 @@ async function invokeRunner(fixture, options = {}) {
     "--base", options.base ?? "main",
     "--expected-head", options.expectedHead ?? fixture.expectedHead,
   ];
+  const executablePath = fake
+    ? `${options.pathPrefix ? `${options.pathPrefix}${path.delimiter}` : ""}${options.candidatePath ? `${fixture.repo}/bin${path.delimiter}` : ""}${fake.bin}${path.delimiter}${process.env.PATH}`
+    : await installGitOnlyPath(fixture.root);
   const env = {
     ...process.env,
-    PATH: fake
-      ? `${options.pathPrefix ? `${options.pathPrefix}${path.delimiter}` : ""}${options.candidatePath ? `${fixture.repo}/bin${path.delimiter}` : ""}${fake.bin}${path.delimiter}${process.env.PATH}`
-      : "/usr/bin:/bin",
+    PATH: executablePath,
     ...options.env,
   };
   const processResult = await run(process.execPath, args, { env });
@@ -811,6 +848,41 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
     assert.equal(dirty.processResult.exitCode, 1);
     assert.equal(dirty.outcome.blocker.code, "dirty_worktree");
     assert.equal(await invocationCount(fake.log), 1);
+  });
+});
+
+test("blocks ignored-content mutations from custom clean filters during baseline capture", {
+  skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const ignored = path.join(fixture.repo, "baseline.ignored");
+    const filter = path.join(fixture.root, "side-effecting-clean-filter");
+    await writeFile(filter, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+
+writeFileSync(${JSON.stringify(ignored)}, "mutated\\n");
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
+`);
+    await chmod(filter, 0o755);
+    await writeFile(path.join(fixture.repo, ".gitattributes"), "custom.txt filter=side-effect\n");
+    await writeFile(path.join(fixture.repo, "custom.txt"), "worktree form\n");
+    await git(fixture.repo, "config", "filter.side-effect.clean", filter);
+    await git(fixture.repo, "add", ".gitattributes", "custom.txt");
+    await git(fixture.repo, "commit", "-m", "add side-effecting clean filter");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+    await writeFile(ignored, "baseline\n");
+    await writeFile(path.join(fixture.repo, "custom.txt"), "WoRkTrEe FoRm\n");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture);
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.ignoredFilesUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.equal(await invocationCount(fake.log), 1);
+    assert.equal(await readFile(ignored, "utf8"), "mutated\n");
   });
 });
 

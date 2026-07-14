@@ -515,27 +515,6 @@ async function captureState(worktree, env, gitExecutable) {
       trackedMismatches.push({ path: relativePath, expectedMode, expectedOid, stage, actualMode, canonicalOid });
     }
   }
-  const lfsFilterOverrides = [...attributesByPath.values()].some((attributes) => attributes.filter === "lfs")
-    ? ["-c", "filter.lfs.process=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"]
-    : [];
-  const statusResult = await git(worktree, [
-    ...lfsFilterOverrides,
-    "-c", "core.fileMode=true",
-    "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
-  ], env, gitExecutable, { stdoutEncoding: null });
-  if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
-  const statusOutput = decodePathOutput(statusResult.stdout, "worktree status");
-  const completeStatus = statusOutput
-    .split("\0")
-    .filter((record) => record
-      && !(record.startsWith(" M ") && safelySmudgedLfsPaths.has(record.slice(3))))
-    .map((record) => `${record}\0`)
-    .join("");
-  const status = completeStatus
-    .split("\0")
-    .filter((record) => record && !record.startsWith("!! "))
-    .map((record) => `${record}\0`)
-    .join("");
   const ignoredResult = await git(
     worktree,
     ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
@@ -561,6 +540,27 @@ async function captureState(worktree, env, gitExecutable) {
       digest: hash.digest("hex"),
     });
   }
+  const lfsFilterOverrides = [...attributesByPath.values()].some((attributes) => attributes.filter === "lfs")
+    ? ["-c", "filter.lfs.process=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"]
+    : [];
+  const statusResult = await git(worktree, [
+    ...lfsFilterOverrides,
+    "-c", "core.fileMode=true",
+    "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--ignore-submodules=none",
+  ], env, gitExecutable, { stdoutEncoding: null });
+  if (statusResult.exitCode !== 0) throw new Error(`Could not read worktree status: ${commandFailure(statusResult)}`);
+  const statusOutput = decodePathOutput(statusResult.stdout, "worktree status");
+  const completeStatus = statusOutput
+    .split("\0")
+    .filter((record) => record
+      && !(record.startsWith(" M ") && safelySmudgedLfsPaths.has(record.slice(3))))
+    .map((record) => `${record}\0`)
+    .join("");
+  const status = completeStatus
+    .split("\0")
+    .filter((record) => record && !record.startsWith("!! "))
+    .map((record) => `${record}\0`)
+    .join("");
   return {
     head: headResult.stdout.trim(),
     status,
