@@ -7,6 +7,10 @@ import { access, copyFile, lstat, mkdtemp, readFile, readdir, readlink, realpath
 import os from "node:os";
 import path from "node:path";
 
+const processTimeoutMs = 30_000;
+const reviewTimeoutMs = 30 * 60_000;
+const terminationGraceMs = 1_000;
+
 const usage = `Usage: local-preflight.mjs --worktree <path> --base <ref> --expected-head <sha>
 
 Run one isolated, read-only Codex review and emit one JSON outcome.`;
@@ -33,6 +37,13 @@ class UnsupportedPathEncodingError extends Error {
     super(`Git returned a non-UTF-8 path in ${source}.`);
     this.source = source;
     this.rawRecordHex = rawRecordHex;
+  }
+}
+
+class UnsupportedCleanFilterError extends Error {
+  constructor(filteredPaths) {
+    super("Custom clean filters cannot be inspected without executing repository-selected commands.");
+    this.filteredPaths = filteredPaths;
   }
 }
 
@@ -90,12 +101,37 @@ function runProcess(command, args, options = {}) {
     let stdout = rawStdout ? [] : "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    let timeout;
+    let hardKillTimeout;
+    let resolutionTimeout;
     const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(hardKillTimeout);
+      clearTimeout(resolutionTimeout);
+      resolve(result);
+    };
+    const kill = (signal) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // The process may have exited between the timeout and termination attempt.
+        }
+      }
+    };
     if (options.input !== undefined) child.stdin.end(options.input);
     if (!rawStdout) child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
@@ -105,9 +141,7 @@ function runProcess(command, args, options = {}) {
     });
     child.stderr?.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      resolve({
+      finish({
         exitCode: null,
         signal: null,
         stdout: rawStdout ? Buffer.concat(stdout) : stdout,
@@ -116,16 +150,28 @@ function runProcess(command, args, options = {}) {
       });
     });
     child.on("close", (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      resolve({
+      finish({
         exitCode,
         signal,
         stdout: rawStdout ? Buffer.concat(stdout) : stdout,
         stderr,
-        error: null,
+        error: timedOut ? { code: "ETIMEDOUT", message: "Subprocess execution timed out." } : null,
       });
     });
+    timeout = setTimeout(() => {
+      timedOut = true;
+      kill("SIGTERM");
+      hardKillTimeout = setTimeout(() => { kill("SIGKILL"); }, terminationGraceMs);
+      resolutionTimeout = setTimeout(() => {
+        finish({
+          exitCode: null,
+          signal: "SIGKILL",
+          stdout: rawStdout ? Buffer.concat(stdout) : stdout,
+          stderr,
+          error: { code: "ETIMEDOUT", message: "Subprocess execution timed out." },
+        });
+      }, terminationGraceMs * 2);
+    }, options.timeoutMs ?? processTimeoutMs);
   });
 }
 
@@ -418,6 +464,10 @@ async function captureState(worktree, env, gitExecutable) {
     env,
     gitExecutable,
   );
+  const filteredPaths = [...attributesByPath]
+    .filter(([, attributes]) => !["unspecified", "unset", "lfs"].includes(attributes.filter))
+    .map(([relativePath, attributes]) => ({ path: relativePath, filter: attributes.filter }));
+  if (filteredPaths.length > 0) throw new UnsupportedCleanFilterError(filteredPaths);
   const autocrlfResult = await git(worktree, ["config", "--get", "core.autocrlf"], env, gitExecutable);
   if (![0, 1].includes(autocrlfResult.exitCode)) {
     throw new Error(`Could not inspect Git line-ending configuration: ${commandFailure(autocrlfResult)}`);
@@ -709,6 +759,11 @@ async function runPreflight(options) {
         rawRecordHex: error.rawRecordHex,
       });
     }
+    if (error instanceof UnsupportedCleanFilterError) {
+      return block(outcome, "unsupported_clean_filter", error.message, {
+        filteredPaths: error.filteredPaths,
+      });
+    }
     return block(outcome, "invalid_target", "Could not inspect the candidate repository.", { error: error.message });
   }
   outcome.actualHead = before.head;
@@ -780,7 +835,7 @@ async function runPreflight(options) {
     "--config", "features.hooks=false",
     "--config", "skills.include_instructions=false",
     "--config", "shell_environment_policy.inherit=\"none\"",
-    "--config", `shell_environment_policy.set={ PATH = ${JSON.stringify(processEnv[Object.keys(processEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH"] ?? "")} }`,
+    "--config", `shell_environment_policy.set={ PATH = ${JSON.stringify(processEnv[Object.keys(processEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH"] ?? "")}, GIT_OPTIONAL_LOCKS = "0" }`,
     "--config", `projects.${JSON.stringify(outcome.worktree)}.trust_level="untrusted"`,
     "--cd", outcome.worktree,
     "review",
@@ -801,7 +856,7 @@ async function runPreflight(options) {
   let result;
   let cleanupError = null;
   try {
-    result = await runProcess(codexExecutable, args, { env: isolated.env });
+    result = await runProcess(codexExecutable, args, { env: isolated.env, timeoutMs: reviewTimeoutMs });
   } finally {
     try {
       await persistAuthRefresh(isolated.authBridge);
@@ -852,6 +907,15 @@ async function runPreflight(options) {
   }
   if (result.error?.code === "ENOENT") {
     return block(outcome, "codex_missing", "Codex CLI disappeared before review execution.", result.error);
+  }
+  if (result.error?.code === "ETIMEDOUT") {
+    return block(outcome, "codex_timeout", "Codex review exceeded the 30-minute execution limit.", {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      error: result.error,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
   }
   if (result.error || result.exitCode !== 0 || result.signal) {
     const [code, message] = commandBlocker(result);

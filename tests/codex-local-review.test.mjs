@@ -158,6 +158,9 @@ if (mode === "nonzero") {
   console.error("review process failed");
   process.exit(7);
 }
+if (mode === "timeout") {
+  setInterval(() => {}, 1_000);
+}
 if (mode === "malformed") {
   console.log("not-json");
   process.exit(0);
@@ -289,6 +292,7 @@ async function installGitOnlyPath(root) {
 async function invokeRunner(fixture, options = {}) {
   const fake = options.withCodex === false ? null : await installFakeCodex(fixture.root, options);
   const args = [
+    ...(options.nodeArgs ?? []),
     runner,
     "--worktree", options.worktree ?? fixture.repo,
     "--base", options.base ?? "main",
@@ -356,7 +360,7 @@ test("captures one isolated local review against the runner-computed merge base"
       "--config", "shell_environment_policy.inherit=\"none\"",
     ]);
     assert.equal(args[13], "--config");
-    assert.match(args[14], /^shell_environment_policy\.set=\{ PATH = ".*" \}$/);
+    assert.match(args[14], /^shell_environment_policy\.set=\{ PATH = ".*", GIT_OPTIONAL_LOCKS = "0" \}$/);
     assert.equal(args[15], "--config");
     assert.equal(args[16], `projects.${JSON.stringify(fixture.repo)}.trust_level="untrusted"`);
     assert.equal(args[17], "--cd");
@@ -537,7 +541,7 @@ command = "candidate-side-effect"
     const configOverrides = outcome.command.args.filter((_, index, args) => args[index - 1] === "--config");
     assert.match(
       configOverrides.find((arg) => arg.startsWith("shell_environment_policy.set=")),
-      /^shell_environment_policy\.set=\{ PATH = ".*" \}$/,
+      /^shell_environment_policy\.set=\{ PATH = ".*", GIT_OPTIONAL_LOCKS = "0" \}$/,
     );
     assert.deepEqual(
       configOverrides.filter((arg) => !arg.startsWith("shell_environment_policy.set=")),
@@ -810,7 +814,7 @@ process.stdout.write(\`version https://git-lfs.github.com/spec/v1\\noid sha256:\
   });
 });
 
-test("allows Git-clean custom-filter attributes and blocks dirty ones", {
+test("blocks custom clean filters before status or review can execute them", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -836,22 +840,17 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
 
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
-    assert.equal(processResult.exitCode, 0);
-    assert.equal(outcome.status, "passed");
-    assert.equal(outcome.readOnly.verified, true);
-    assert.equal(outcome.readOnly.before.trackedFiles.digest, outcome.readOnly.after.trackedFiles.digest);
-    assert.equal(await invocationCount(fake.log), 1);
-
-    await writeFile(path.join(fixture.repo, "custom.txt"), "dirty worktree form\n");
-    await rm(fake.bin, { recursive: true });
-    const dirty = await invokeRunner(fixture);
-    assert.equal(dirty.processResult.exitCode, 1);
-    assert.equal(dirty.outcome.blocker.code, "dirty_worktree");
-    assert.equal(await invocationCount(fake.log), 1);
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.status, "blocked");
+    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
+    assert.deepEqual(outcome.blocker.evidence.filteredPaths, [{ path: "custom.txt", filter: "uppercase" }]);
+    assert.equal(outcome.command.attempted, false);
+    assert.equal(await invocationCount(fake.log), 0);
+    await assert.rejects(readFile(log), { code: "ENOENT" });
   });
 });
 
-test("blocks ignored-content mutations from custom clean filters during baseline capture", {
+test("does not allow custom clean filters to mutate ignored content during baseline capture", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -878,15 +877,38 @@ process.stdout.write(Buffer.concat(chunks).toString("utf8").toUpperCase());
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
     assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "repository_mutated");
-    assert.equal(outcome.readOnly.ignoredFilesUnchanged, false);
-    assert.equal(outcome.readOnly.verified, false);
-    assert.equal(await invocationCount(fake.log), 1);
-    assert.equal(await readFile(ignored, "utf8"), "mutated\n");
+    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
+    assert.equal(outcome.command.attempted, false);
+    assert.equal(await invocationCount(fake.log), 0);
+    assert.equal(await readFile(ignored, "utf8"), "baseline\n");
   });
 });
 
-test("does not run tracked-file clean filters while fingerprinting", {
+test("terminates a stalled Codex review and emits a blocked outcome", async () => {
+  await withFixture(async (fixture) => {
+    const preload = path.join(fixture.root, "accelerate-review-timeout.mjs");
+    await writeFile(preload, `const originalSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (callback, delay, ...args) =>
+  originalSetTimeout(callback, delay === 30 * 60_000 ? 25 : delay, ...args);
+`);
+
+    const startedAt = Date.now();
+    const { processResult, outcome, fake } = await invokeRunner(fixture, {
+      mode: "timeout",
+      nodeArgs: ["--import", preload],
+    });
+
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "codex_timeout");
+    assert.equal(outcome.command.error.code, "ETIMEDOUT");
+    assert.equal(outcome.command.attempted, true);
+    assert.equal(outcome.readOnly.verified, true);
+    assert.equal(await invocationCount(fake.log), 1);
+    assert.ok(Date.now() - startedAt < 5_000);
+  });
+});
+
+test("does not run tracked-file clean filters while inspecting index flags", {
   skip: process.platform === "win32" ? "the filter probe uses a POSIX executable" : false,
 }, async () => {
   await withFixture(async (fixture) => {
@@ -910,8 +932,8 @@ process.stdin.pipe(process.stdout);
     const { processResult, outcome, fake } = await invokeRunner(fixture);
 
     assert.equal(processResult.exitCode, 1);
-    assert.equal(outcome.blocker.code, "dirty_worktree");
-    assert.deepEqual(outcome.blocker.evidence.hiddenIndexEntries, ["h file.txt"]);
+    assert.equal(outcome.blocker.code, "unsupported_clean_filter");
+    assert.deepEqual(outcome.blocker.evidence.filteredPaths, [{ path: "file.txt", filter: "probe" }]);
     assert.equal(await invocationCount(fake.log), 0);
     await assert.rejects(readFile(log), { code: "ENOENT" });
   });
