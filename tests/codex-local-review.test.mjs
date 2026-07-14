@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -80,7 +80,7 @@ async function installFakeCodex(root, options = {}) {
   const executable = path.join(bin, "codex");
   const homeLog = path.join(root, "codex-home.txt");
   await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync, chmodSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -98,6 +98,7 @@ if (mode === "check-isolated-home" || mode === "refresh-auth") {
   writeFileSync(${JSON.stringify(homeLog)}, process.env.CODEX_HOME);
   if (process.env.CODEX_HOME === callerCodexHome
       || existsSync(path.join(process.env.CODEX_HOME, "AGENTS.md"))
+      || lstatSync(path.join(process.env.CODEX_HOME, "auth.json")).isSymbolicLink()
       || readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8") !== "test-auth\\n") {
     console.error("Codex home was not isolated from caller instructions while retaining auth");
     process.exit(9);
@@ -179,6 +180,10 @@ if (mode === "mutate-tracked-with-restored-mtime") {
 }
 if (mode === "mutate-submodule") {
   writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "submodule mutation\\n");
+}
+if (mode === "replace-submodule-checkout") {
+  rmSync(new URL("dep/.git", "file://" + worktree + "/"), { force: true, recursive: true });
+  writeFileSync(new URL("dep/file.txt", "file://" + worktree + "/"), "detached submodule mutation\\n");
 }
 if (mode === "mutate-head") {
   writeFileSync(new URL("codex-committed.txt", "file://" + worktree + "/"), "mutation\\n");
@@ -310,6 +315,37 @@ printf 'spoofed candidate executable\\n'
     assert.equal(processResult.exitCode, 0);
     assert.equal(outcome.status, "passed");
     assert.equal(outcome.codexVersion, "codex-cli 9.9.9");
+    assert.equal(outcome.command.executable, fake.executable);
+    assert.equal(await invocationCount(fake.log), 1);
+  });
+});
+
+test("ignores outside PATH executables that resolve inside the candidate", {
+  skip: process.platform === "win32" ? "creating symlinks requires optional Windows privileges" : false,
+}, async () => {
+  await withFixture(async (fixture) => {
+    const candidateBin = path.join(fixture.repo, "bin");
+    const outsideBin = path.join(fixture.root, "outside-bin");
+    await mkdir(candidateBin);
+    await mkdir(outsideBin);
+    for (const name of ["codex", "git"]) {
+      const executable = path.join(candidateBin, name);
+      await writeFile(executable, `#!/bin/sh
+printf 'spoofed candidate executable\n'
+`);
+      await chmod(executable, 0o755);
+      await symlink(executable, path.join(outsideBin, name));
+    }
+    await git(fixture.repo, "add", "bin/codex", "bin/git");
+    await git(fixture.repo, "commit", "-m", "add executable symlink targets");
+    fixture.expectedHead = await git(fixture.repo, "rev-parse", "HEAD");
+
+    const { processResult, outcome, fake } = await invokeRunner(fixture, {
+      pathPrefix: outsideBin,
+    });
+
+    assert.equal(processResult.exitCode, 0);
+    assert.equal(outcome.status, "passed");
     assert.equal(outcome.command.executable, fake.executable);
     assert.equal(await invocationCount(fake.log), 1);
   });
@@ -590,6 +626,32 @@ test("blocks tracked submodule changes hidden by ignore=all", async () => {
     assert.equal(outcome.readOnly.statusUnchanged, false);
     assert.equal(outcome.readOnly.verified, false);
     assert.match(outcome.readOnly.after.completeStatus, /M dep/);
+  });
+});
+
+test("blocks replacement of a submodule checkout with an ordinary directory", async () => {
+  await withFixture(async (fixture) => {
+    await addSubmodule(fixture);
+    const expectedOid = await git(fixture.repo, "rev-parse", "HEAD:dep");
+
+    const { processResult, outcome } = await invokeRunner(fixture, {
+      mode: "replace-submodule-checkout",
+    });
+
+    assert.equal(await git(fixture.repo, "status", "--porcelain=v1", "--ignore-submodules=none"), "");
+    assert.equal(processResult.exitCode, 1);
+    assert.equal(outcome.blocker.code, "repository_mutated");
+    assert.equal(outcome.readOnly.statusUnchanged, true);
+    assert.equal(outcome.readOnly.trackedFilesUnchanged, false);
+    assert.equal(outcome.readOnly.verified, false);
+    assert.deepEqual(outcome.readOnly.after.trackedFiles.mismatches, [{
+      path: "dep",
+      expectedMode: "160000",
+      expectedOid,
+      stage: "0",
+      actualMode: "directory",
+      canonicalOid: null,
+    }]);
   });
 });
 

@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { access, lstat, mkdtemp, readlink, realpath, rm, symlink } from "node:fs/promises";
+import { access, copyFile, link, lstat, mkdtemp, readFile, readdir, readlink, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -96,7 +96,7 @@ function isWithin(parent, candidate) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-async function resolveExecutable(name, env) {
+async function resolveExecutable(name, env, excludedRoot) {
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   const extensions = process.platform === "win32"
     ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
@@ -107,7 +107,8 @@ async function resolveExecutable(name, env) {
       const candidate = path.join(directory, `${name}${extension}`);
       try {
         await access(candidate, constants.X_OK);
-        return await realpath(candidate);
+        const resolved = await realpath(candidate);
+        if (!isWithin(excludedRoot, resolved)) return resolved;
       } catch {
         // Continue searching PATH.
       }
@@ -137,7 +138,7 @@ async function sanitizedProcessEnvironment(worktree) {
   }
   env[pathKey] = safePath.join(path.delimiter);
 
-  const gitExecutable = await resolveExecutable("git", env);
+  const gitExecutable = await resolveExecutable("git", env, worktree);
   if (!gitExecutable) throw new Error("Git was not found outside the candidate worktree.");
   const result = await runProcess(gitExecutable, ["rev-parse", "--local-env-vars"], { env });
   if (result.exitCode !== 0) {
@@ -165,19 +166,38 @@ async function isolatedCodexEnvironment(env, worktree) {
   const codexHome = await mkdtemp(path.join(tempRoot, "codex-local-review-"));
   const callerCodexHome = path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex"));
   const callerAuth = path.join(callerCodexHome, "auth.json");
+  const isolatedAuth = path.join(codexHome, "auth.json");
+  let authSnapshot = null;
   try {
-    await access(callerAuth);
-    await symlink(callerAuth, path.join(codexHome, "auth.json"), "file");
+    authSnapshot = await readFile(callerAuth);
+    try {
+      await link(callerAuth, isolatedAuth);
+    } catch {
+      await copyFile(callerAuth, isolatedAuth, constants.COPYFILE_EXCL);
+    }
   } catch (error) {
     if (error.code !== "ENOENT") {
       await rm(codexHome, { recursive: true, force: true });
       throw error;
     }
+    authSnapshot = null;
   }
   return {
     codexHome,
     env: { ...env, CODEX_HOME: codexHome },
+    authBridge: authSnapshot ? { callerAuth, isolatedAuth, authSnapshot } : null,
   };
+}
+
+async function persistAuthRefresh(authBridge) {
+  if (!authBridge) return;
+  const [callerAuth, isolatedAuth] = await Promise.all([
+    readFile(authBridge.callerAuth),
+    readFile(authBridge.isolatedAuth),
+  ]);
+  if (!isolatedAuth.equals(authBridge.authSnapshot) && callerAuth.equals(authBridge.authSnapshot)) {
+    await copyFile(authBridge.isolatedAuth, authBridge.callerAuth);
+  }
 }
 
 function commandFailure(result) {
@@ -267,9 +287,25 @@ async function captureState(worktree, env, gitExecutable) {
       const absolutePath = path.join(worktree, relativePath);
       const stats = await lstat(absolutePath);
       if (expectedMode === "160000" && stats.isDirectory()) {
-        actualMode = "160000";
-        canonicalOid = expectedOid;
-        worktreeDigest = expectedOid;
+        actualMode = "directory";
+        const entries = await readdir(absolutePath);
+        if (entries.length === 0) {
+          actualMode = "160000";
+          canonicalOid = expectedOid;
+          worktreeDigest = "uninitialized";
+        } else {
+          const topLevelResult = await git(absolutePath, ["rev-parse", "--show-toplevel"], env, gitExecutable);
+          if (topLevelResult.exitCode === 0
+              && await realpath(topLevelResult.stdout.trim()) === await realpath(absolutePath)) {
+            const submoduleHeadResult = await git(absolutePath, ["rev-parse", "--verify", "HEAD"], env, gitExecutable);
+            const submoduleHead = submoduleHeadResult.stdout.trim();
+            if (submoduleHeadResult.exitCode === 0 && /^[0-9a-f]+$/.test(submoduleHead)) {
+              actualMode = "160000";
+              canonicalOid = submoduleHead;
+              worktreeDigest = `checkout:${submoduleHead}`;
+            }
+          }
+        }
       } else if (stats.isSymbolicLink()) {
         actualMode = "120000";
         const target = await readlink(absolutePath);
@@ -418,7 +454,7 @@ async function runPreflight(options) {
     return block(outcome, "invalid_target", "The worktree must be the repository top level.", { topLevel });
   }
 
-  const codexExecutable = await resolveExecutable("codex", processEnv);
+  const codexExecutable = await resolveExecutable("codex", processEnv, outcome.worktree);
   if (!codexExecutable) {
     return block(outcome, "codex_missing", "Codex CLI was not found on PATH.");
   }
@@ -529,9 +565,14 @@ async function runPreflight(options) {
     result = await runProcess(codexExecutable, args, { env: isolated.env });
   } finally {
     try {
-      await rm(isolated.codexHome, { recursive: true, force: true });
+      await persistAuthRefresh(isolated.authBridge);
     } catch (error) {
       cleanupError = error;
+    }
+    try {
+      await rm(isolated.codexHome, { recursive: true, force: true });
+    } catch (error) {
+      cleanupError ??= error;
     }
   }
   Object.assign(outcome.command, result);
@@ -566,7 +607,7 @@ async function runPreflight(options) {
     });
   }
   if (cleanupError) {
-    return block(outcome, "environment_failed", "Could not remove the isolated Codex home.", {
+    return block(outcome, "environment_failed", "Could not finalize the isolated Codex authentication or home.", {
       error: cleanupError.message,
     });
   }
