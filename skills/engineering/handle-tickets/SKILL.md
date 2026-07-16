@@ -27,7 +27,7 @@ A ticket is complete only when its PR is merge-ready or a targeted blocker requi
 2. Build the queue. Classify readiness, dependencies, likely conflicts, and parallelization opportunities. Done when every implementable ticket maps to one conductor, worktree, branch, and PR plan.
 3. Schedule conductors. Fan out independent tickets in parallel and queue dependent or conflicting tickets behind explicit prerequisites. Done when every ticket is running, queued with a reason, excluded, or blocked.
 4. Reconcile handoffs. Verify each conductor returned ticket status, branch/worktree, commits, checks, `code-review` report, fix result when needed, PR URL, Codex outcome, final scope-fit result, assumptions, and blockers. Done when every ticket meets the Ticket Completion rule, is excluded, or is queued behind an explicit merge prerequisite.
-5. Return the merge decision. Report the PRs, branches, checks, review outcomes, blockers, and any human action needed. When the ticket orchestrator confirms that a PR is merged, it runs PR Cleanup and resumes the work blocked by that PR. Before starting a ticket that depended on the merged PR, the ticket orchestrator updates the default branch to its latest remote commit, confirms that it includes the merge, then creates the dependent ticket's branch and worktree from that updated default branch.
+5. Return the merge decision. Report the PRs, branches, checks, review outcomes, blockers, and any human action needed. Run cleanup only after the user confirms the PRs are merged and asks for cleanup or ticket reconciliation.
 
 ## Ticket Conductor Loop
 
@@ -42,10 +42,6 @@ For each assigned ticket:
 
 The conductor handoff must include status, ticket URL, worktree, branch, commits, changed files, checks, `code-review` report, fix result when needed, PR URL, Codex outcome, final scope-fit result and any narrowing commits, merge-ready yes/no, next action, and owner.
 
-## PR Cleanup
+## Cleanup
 
-For each confirmed merged PR, record the merge, update its associated ticket and close it when the PR completes the ticket, resolve related review threads, remove the PR-specific worktree, branch, and temporary artifacts, and report what was cleaned up. Keep partial, blocked, and unmerged tickets intact with evidence and a next action.
-
-## Repository Cleanup
-
-When all tickets of the PRD handled in this run are closed and the work is done, the ticket orchestrator marks that PRD as complete, then switches the worktree from which `handle-tickets` was started to the default branch and updates it to the latest remote commit.
+After the user confirms PRs are merged and asks for cleanup, fetch the default branch, verify merged PRs, update ticket status or comments with merge evidence, close tickets only when asked, and remove stale worktrees and branches from this run. Leave partial, blocked, or unmerged tickets intact with evidence and next action.
