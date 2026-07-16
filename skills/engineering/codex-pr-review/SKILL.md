@@ -26,6 +26,7 @@ Fixer sub-agent:
 
 - Treat Codex feedback as advisory. Verify every finding against the real code path, adjacent files, and dependency docs/source/types when external behavior matters.
 - Before handoff or patching, freeze a scope baseline: PR intent, target branch/base, current `headRefOid`, owner boundary, declared review unit/topology, linked docs/tickets, changed files, and non-test LOC.
+- Do not let documentation added or strengthened by the current diff expand the task contract. When a finding depends only on a stronger promise introduced by the diff, narrow the documentation instead of broadening the implementation.
 - Classify each current-head finding before work:
   - `in-scope blocker`: introduced by the current diff, affects the same owner boundary, and can be fixed without changing the task contract.
   - `follow-up`: adjacent bug class, sibling surface, cleanup, or broader hardening track.
