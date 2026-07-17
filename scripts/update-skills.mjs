@@ -15,11 +15,13 @@ const skillsCli = "skills@1.5.19";
 const sources = [
   {
     repository: "mattpocock/skills",
-    manifestUrl: "https://raw.githubusercontent.com/mattpocock/skills/main/.claude-plugin/plugin.json",
+    inventoryUrl: "https://raw.githubusercontent.com/mattpocock/skills/main/.claude-plugin/plugin.json",
+    skillNames: manifestSkillNames,
   },
   {
     repository: "Gil-1/skills",
-    manifestUrl: "https://raw.githubusercontent.com/Gil-1/skills/main/.claude-plugin/plugin.json",
+    inventoryUrl: "https://api.github.com/repos/Gil-1/skills/git/trees/main?recursive=1",
+    skillNames: gilStableSkillNames,
   },
 ];
 
@@ -72,19 +74,37 @@ function manifestSkillNames(manifest, repository) {
   return names;
 }
 
-async function fetchPublishedSources(sourceDefinitions = sources, fetchImpl = fetch) {
+function gilStableSkillNames(tree, repository) {
+  if (tree.truncated || !Array.isArray(tree.tree)) {
+    throw new Error(`${repository} returned an incomplete repository tree.`);
+  }
+
+  return tree.tree
+    .filter((entry) => entry.type === "blob")
+    .map((entry) => String(entry.path).match(/^skills\/engineering\/([^/]+)\/SKILL\.md$/)?.[1])
+    .filter(Boolean)
+    .sort();
+}
+
+async function fetchPublishedSources() {
   return Promise.all(
-    sourceDefinitions.map(async (source) => {
-      const response = await fetchImpl(source.manifestUrl, {
-        headers: { "User-Agent": "gil-skills-update" },
+    sources.map(async (source) => {
+      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      const response = await fetch(source.inventoryUrl, {
+        headers: {
+          "User-Agent": "gil-skills-update",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) {
-        throw new Error(`Unable to fetch ${source.manifestUrl}: HTTP ${response.status}`);
+        throw new Error(`Unable to fetch ${source.inventoryUrl}: HTTP ${response.status}`);
       }
 
-      const manifest = await response.json();
-      return { ...source, names: manifestSkillNames(manifest, source.repository) };
+      const inventory = await response.json();
+      const names = source.skillNames(inventory, source.repository);
+      if (names.length === 0) throw new Error(`${source.repository} has no published skills.`);
+      return { ...source, names };
     }),
   );
 }
@@ -337,13 +357,3 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
     process.exitCode = 1;
   });
 }
-
-export {
-  buildAddArgs,
-  collectStaleSkills,
-  manifestSkillNames,
-  pruneStaleSkills,
-  resolveSkillPaths,
-  sourceOwns,
-  verifyInstallation,
-};

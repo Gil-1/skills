@@ -23,7 +23,7 @@ npm run skills:update
 
 The updater installs to the shared `~/.agents/skills` cache used by Codex and links the same skills into `~/.claude/skills`. It uses a tested CLI version to refresh the latest contents from both repositories, then removes skills that either source no longer publishes without touching skills owned by other sources. Preview the exact plan with `npm run skills:update:dry-run`.
 
-The published Gil plugin includes:
+The stable Gil set includes:
 
 - `handle-tickets` - orchestrates implementation-ready tickets through implementation, fresh code review, a local Codex review/fix loop, PR publication, and Codex PR validation.
 - `review-fix` - reviews code changes, fixes actionable findings, and verifies the result.
@@ -33,16 +33,7 @@ The published Gil plugin includes:
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
 
-Skills under `skills/in-progress/` are internal and are not included in the published plugin or updater.
-
-### Claude Code Plugin
-
-Claude Code users can alternatively install the stable Gil skills as a native plugin:
-
-```bash
-claude plugin marketplace add Gil-1/skills
-claude plugin install gil-skills@gil-1
-```
+Skills under `skills/in-progress/` are internal and are not included in the updater.
 
 ## Matt Pocock Dependencies
 
