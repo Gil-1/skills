@@ -7,6 +7,8 @@
     "link": "node scripts/link-skills.mjs",
     "link:dry-run": "node scripts/link-skills.mjs --dry-run",
     "deps": "node scripts/link-skills.mjs --deps-only",
-    "deps:dry-run": "node scripts/link-skills.mjs --deps-only --dry-run"
+    "deps:dry-run": "node scripts/link-skills.mjs --deps-only --dry-run",
+    "skills:update": "node scripts/update-skills.mjs",
+    "skills:update:dry-run": "node scripts/update-skills.mjs --dry-run"
   }
 }
