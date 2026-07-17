@@ -1,0 +1,22 @@
+{
+  "name": "gil-1",
+  "owner": {
+    "name": "Gil"
+  },
+  "description": "Gil's engineering workflow skills for Claude Code.",
+  "plugins": [
+    {
+      "name": "gil-skills",
+      "source": "./",
+      "description": "Focused engineering workflow skills for ticket delivery, review, architecture, and codebase maintenance.",
+      "category": "engineering",
+      "keywords": [
+        "engineering",
+        "skills",
+        "code-review",
+        "architecture",
+        "ticket-delivery"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "gil-skills",
+  "description": "Focused engineering workflow skills for ticket delivery, review, architecture, and codebase maintenance.",
+  "author": {
+    "name": "Gil"
+  },
+  "repository": "https://github.com/Gil-1/skills",
+  "keywords": [
+    "engineering",
+    "skills",
+    "code-review",
+    "architecture",
+    "ticket-delivery"
+  ],
+  "skills": [
+    "./skills/engineering/codebase-cleanup-audit",
+    "./skills/engineering/codex-local-review",
+    "./skills/engineering/codex-pr-review",
+    "./skills/engineering/handle-tickets",
+    "./skills/engineering/project-architecture-report",
+    "./skills/engineering/project-folder-structure",
+    "./skills/engineering/review-fix"
+  ]
+}

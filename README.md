@@ -13,33 +13,42 @@ These skills build on the excellent work in [Matt Pocock's skills repo](https://
 
 ## Install
 
-Install everything:
+Synchronize the latest published Matt Pocock and Gil skills for Claude Code and Codex:
 
 ```bash
-npx skills@latest add Gil-1/skills -g -a "*" --skill "*" --full-depth -y
+git clone https://github.com/Gil-1/skills.git
+cd skills
+npm run skills:update
 ```
 
-This installs:
+The updater installs to the shared `~/.agents/skills` cache used by Codex and links the same skills into `~/.claude/skills`. It uses a tested CLI version to refresh the latest contents from both repositories, then removes skills that either source no longer publishes without touching skills owned by other sources. Preview the exact plan with `npm run skills:update:dry-run`.
+
+The published Gil plugin includes:
 
 - `handle-tickets` - orchestrates implementation-ready tickets through implementation, fresh code review, a local Codex review/fix loop, PR publication, and Codex PR validation.
-- `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
 - `review-fix` - reviews code changes, fixes actionable findings, and verifies the result.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, investigates repeated feedback patterns, pushes fixes, and loops until Codex validates the PR.
 - `codex-local-review` - applies Codex's P0-P3 review rubric to changes already in context and returns prioritized, actionable findings without editing.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
-- `game-improvement-loop` - runs validated game-improvement cycles through PRD, implementation, and playtest evidence.
+
+Skills under `skills/in-progress/` are internal and are not included in the published plugin or updater.
+
+### Claude Code Plugin
+
+Claude Code users can alternatively install the stable Gil skills as a native plugin:
+
+```bash
+claude plugin marketplace add Gil-1/skills
+claude plugin install gil-skills@gil-1
+```
 
 ## Matt Pocock Dependencies
 
 These skills build on Matt Pocock's current workflow set, including `improve-codebase-architecture`, `codebase-design`, `domain-modeling`, `to-spec`, `to-tickets`, `wayfinder`, `implement`, `code-review`, `triage`, `diagnosing-bugs`, and `research`.
 
-Install or refresh those dependencies with:
-
-```bash
-npx skills@latest add mattpocock/skills -g -a "*" --skill setup-matt-pocock-skills --skill ask-matt --skill improve-codebase-architecture --skill codebase-design --skill domain-modeling --skill grill-me --skill grill-with-docs --skill to-spec --skill to-tickets --skill wayfinder --skill implement --skill code-review --skill triage --skill diagnosing-bugs --skill prototype --skill research --skill tdd --skill handoff --skill grilling --skill writing-great-skills --full-depth -y
-```
+`npm run skills:update` installs the complete set published by Matt's plugin manifest, so newly promoted skills are discovered automatically.
 
 Run `/setup-matt-pocock-skills` once inside your agent for each project you want to use these workflows on.
 

@@ -2,6 +2,8 @@
 name: grill-with-docs-smarter
 description: Evidence-aware grill-with-docs with fewer unnecessary questions.
 disable-model-invocation: true
+metadata:
+  internal: true
 ---
 
 Run a `/grilling` session, using the `/domain-modeling` skill, with an evidence-first question filter.
