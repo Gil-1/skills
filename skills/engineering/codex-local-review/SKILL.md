@@ -1,40 +1,41 @@
 ---
 name: codex-local-review
-description: Run one isolated, read-only local Codex review against a clean, pinned Git branch before publication. Use when a user or workflow needs implementation-risk findings without editing the candidate or claiming GitHub validation.
+description: Apply Codex's P0-P3 review rubric to local changes. Use for read-only reviews requiring prioritized, actionable findings.
 ---
 
 # Codex Local Review
 
-Run exactly one local Codex review pass through the bundled runner. This skill owns review execution and reporting only.
+Review the supplied change under the most specific task and repository guidance. Inspect surrounding code and tests to prove findings; leave the workspace unchanged.
 
-## Prerequisites
+## Finding Rubric
 
-- Require the Codex CLI on `PATH` and authenticated for model access.
-- Require the candidate worktree path, base reference, and full expected HEAD SHA.
-- The candidate must be a clean Git worktree, including no untracked files.
+Return a finding only when it is:
 
-## Run
+- Introduced by the change.
+- Material to correctness, performance, security, or maintainability.
+- Discrete and actionable, not a broad concern or redesign preference.
+- Fixable at the repository's existing level of rigor.
+- Likely to be fixed if the author knew about it.
+- Independent of unstated codebase or author-intent assumptions.
+- Backed by evidence identifying the affected code and proving the trigger.
+- Not clearly intentional.
 
-1. Record the caller-supplied worktree, base reference, and expected HEAD. Do not replace expected HEAD with a later commit.
-2. Run `node <skill-dir>/scripts/local-preflight.mjs --worktree <path> --base <ref> --expected-head <sha>` once.
-3. Read the single JSON outcome from stdout. A nonzero runner exit is a blocked outcome, not an approval and not a reason to retry automatically.
-4. Return the complete outcome, including reviewed HEAD, resolved base and merge base, Codex version, command result, read-only verification, terminal review output, and blocker evidence.
-5. Describe `status: passed` only as a completed local Codex preflight for that exact reviewed HEAD. Preserve and report all findings in `reviewOutput`; this skill does not disposition or fix them.
+Return every qualifying finding; prefer none to speculation. Ignore trivial style and non-blocking nits unless they obscure meaning or violate documented standards.
 
-## Runner Contract
+Assign one priority:
 
-- Resolve the repository worktree, require ordinary `git status --porcelain` cleanliness, and verify exact expected HEAD.
-- Resolve the base, compute the merge base, and reject an empty merge-base-to-HEAD diff.
-- Check the Codex CLI version, then run one `codex exec review` against the computed merge base with a read-only sandbox, ephemeral session, JSON events, disabled hooks, the candidate worktree, and a no-skills developer instruction naming the pinned target.
-- Apply a 30-minute review timeout and require a complete ordered terminal review lifecycle.
-- Compare ordinary HEAD and Git status before and after review. Any change blocks the outcome.
-- Emit one JSON outcome and exit zero only for `status: passed`.
+- **P0**: Universal release, operations, or major-usage blocker independent of input assumptions.
+- **P1**: Urgent defect that should be fixed in the next cycle.
+- **P2**: Normal defect that should be fixed eventually.
+- **P3**: Low-impact defect or worthwhile improvement.
 
-## Guardrails
+## Finding Format
 
-- Never edit or fix files.
-- Never commit, push, or publish a pull request.
-- Never watch or interact with GitHub.
-- Never claim GitHub Codex validation or equivalence with the hosted reviewer.
-- Never turn a validation, Codex, lifecycle, timeout, or mutation failure into success.
-- Never invoke Codex directly, run a second pass, or retry a blocked pass. A caller may start a fresh skill invocation after resolving the blocker or changing HEAD.
+- Use an imperative title prefixed with `[P0]`-`[P3]`, under 80 characters.
+- Explain why it is a bug, its trigger, and accurate severity in one brief, matter-of-fact paragraph.
+- Include the matching numeric priority from 0 to 3 and confidence from 0.0 to 1.0.
+- Cite an absolute path and the shortest changed-line range that overlaps the diff, normally under 10 lines.
+- Keep one issue per finding.
+- Keep code excerpts under four lines; use suggestion blocks only for minimal replacements preserving leading whitespace.
+
+Order by priority and start with findings. If none qualify, return `No findings.` Finish with `patch is correct` or `patch is incorrect`, a one-to-three-sentence explanation, and overall confidence from 0.0 to 1.0. Correct means existing code and tests still work and the change introduces no bugs; ignore non-blocking nits. Do not generate a PR fix.
