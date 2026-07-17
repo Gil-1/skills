@@ -10,7 +10,6 @@ These skills build on the excellent work in [Matt Pocock's skills repo](https://
 
 - `npx` for installing skills.
 - GitHub CLI (`gh`) installed and authenticated in each target repository that uses `codex-pr-review` or PR publishing.
-- Codex CLI (`codex`) installed and authenticated with `codex login` to use `codex-local-review`.
 
 ## Install
 
@@ -22,11 +21,11 @@ npx skills@latest add Gil-1/skills -g -a "*" --skill "*" --full-depth -y
 
 This installs:
 
-- `handle-tickets` - orchestrates existing implementation-ready tickets through implementation, fresh code review, scoped fixes, PR publication, and Codex PR review.
+- `handle-tickets` - orchestrates implementation-ready tickets through implementation, fresh code review, a local Codex review/fix loop, PR publication, and Codex PR validation.
 - `grill-with-docs-smarter` - wraps Matt Pocock's `grill-with-docs` with evidence-aware recommendations and fewer unnecessary questions.
 - `review-fix` - reviews code changes, fixes actionable findings, and verifies the result.
 - `codex-pr-review` - waits for automated Codex PR review, handles valid comments, investigates repeated feedback patterns, pushes fixes, and loops until Codex validates the PR.
-- `codex-local-review` - runs one isolated, read-only local Codex preflight against a clean branch and returns findings tied to the reviewed HEAD.
+- `codex-local-review` - applies Codex's P0-P3 review rubric to changes already in context and returns prioritized, actionable findings without editing.
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
