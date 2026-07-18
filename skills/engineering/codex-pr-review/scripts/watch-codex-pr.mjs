@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1026,6 +1027,10 @@ function summarize(pr) {
   const freshFeedbackItems = feedbackItems.filter((item) =>
     feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
   );
+  const currentHeadFeedbackItems = feedbackItems.filter((item) =>
+    feedbackItemCoversCurrentHead(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+  );
+  const dispositionedCurrentHeadFeedbackItems = currentHeadFeedbackItems.filter((item) => item.validityReaction);
   const freshFeedbackItemIds = new Set(freshFeedbackItems.map((item) => item.id));
   const freshActiveCodexThreads = activeCodexThreads
     .map((thread) => {
@@ -1074,6 +1079,8 @@ function summarize(pr) {
     freshFeedbackItems,
     freshActiveCodexThreads,
     feedbackCount: feedbackItems.length,
+    currentHeadFeedbackCount: currentHeadFeedbackItems.length,
+    dispositionedCurrentHeadFeedbackCount: dispositionedCurrentHeadFeedbackItems.length,
     activeCodexThreadCount: activeCodexThreads.length,
     freshFeedbackCount: freshFeedbackItems.length,
     freshActiveCodexThreadCount: freshActiveCodexThreads.length,
@@ -1256,6 +1263,10 @@ function isFreshTimestamp(timestamp, statusFreshAfter) {
 
 function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
   if (item.validityReaction) return false;
+  return feedbackItemCoversCurrentHead(item, statusFreshAfter, headRefOid, latestReviewRequestAt);
+}
+
+function feedbackItemCoversCurrentHead(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
   if (item.reviewedCommitOid && headRefOid) {
     return commitMatchesHead(item.reviewedCommitOid, headRefOid)
       && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
@@ -1417,7 +1428,17 @@ function fingerprint(summary) {
 function immediateEvent(snapshot) {
   if (snapshot.status === "approved") return "codex_approved";
   if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
+  if (dispositionedReviewIsComplete(snapshot)) return "codex_review_complete";
   return undefined;
+}
+
+function dispositionedReviewIsComplete(snapshot) {
+  return snapshot.status === "none"
+    && Boolean(snapshot.currentHeadReview)
+    && !snapshot.snapshotTruncated
+    && snapshot.currentHeadFeedbackCount > 0
+    && snapshot.currentHeadFeedbackCount === snapshot.dispositionedCurrentHeadFeedbackCount
+    && snapshot.activeCodexThreadCount === 0;
 }
 
 function changeEvent(previous, current) {
@@ -1572,7 +1593,11 @@ async function watch(options) {
   });
 }
 
-watch(parseArgs(process.argv.slice(2))).catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  watch(parseArgs(process.argv.slice(2))).catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+export { immediateEvent, summarize };
