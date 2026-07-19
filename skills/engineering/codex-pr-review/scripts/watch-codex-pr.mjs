@@ -1050,7 +1050,7 @@ function summarize(pr, options = {}) {
     feedbackItemIsFresh(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
   );
   const currentHeadFeedbackItems = feedbackItems.filter((item) =>
-    feedbackItemCoversCurrentHead(item, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+    feedbackItemCoversCurrentHead(item, pr.headRefOid, latestReviewRequestAt),
   );
   const dispositionedCurrentHeadFeedbackItems = currentHeadFeedbackItems.filter((item) => item.validityReaction);
   const freshFeedbackItemIds = new Set(freshFeedbackItems.map((item) => item.id));
@@ -1069,7 +1069,7 @@ function summarize(pr, options = {}) {
     .filter((thread) => thread.comments.length > 0);
   const currentHeadActiveCodexThreads = activeCodexThreads.filter((thread) =>
     thread.comments.some((comment) =>
-      feedbackItemCoversCurrentHead(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+      feedbackItemCoversCurrentHead(comment, pr.headRefOid, latestReviewRequestAt),
     ),
   );
   const freshFeedbackAt = newestTimestamp(
@@ -1261,15 +1261,16 @@ function isFreshTimestamp(timestamp, statusFreshAfter) {
 
 function feedbackItemIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
   if (item.validityReaction) return false;
-  return feedbackItemCoversCurrentHead(item, statusFreshAfter, headRefOid, latestReviewRequestAt);
-}
-
-function feedbackItemCoversCurrentHead(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
-  if (item.reviewedCommitOid && headRefOid) {
-    return commitMatchesHead(item.reviewedCommitOid, headRefOid)
-      && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
+  if (item.reviewedCommitOid) {
+    return feedbackItemCoversCurrentHead(item, headRefOid, latestReviewRequestAt);
   }
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
+}
+
+function feedbackItemCoversCurrentHead(item, headRefOid, latestReviewRequestAt) {
+  return Boolean(item.reviewedCommitOid && headRefOid)
+    && commitMatchesHead(item.reviewedCommitOid, headRefOid)
+    && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
 }
 
 function feedbackItemTimestamp(item) {
@@ -1432,11 +1433,13 @@ function dispositionedReviewCandidate(snapshot) {
     && snapshot.currentHeadActiveCodexThreadCount === 0;
 }
 
-async function verifyDispositionedReviewCandidate(target, snapshot, options) {
+async function verifyDispositionedReviewEvidence(target, snapshot, options) {
   if (
     options.fullHistory
     || !snapshot.completionSnapshotTruncated
-    || !dispositionedReviewCandidate(snapshot)
+    || snapshot.status !== "none"
+    || snapshot.currentHeadFeedbackCount === 0
+    || snapshot.currentHeadActiveCodexThreadCount > 0
   ) {
     return snapshot;
   }
@@ -1488,7 +1491,7 @@ async function watch(options) {
     target = await resolveTarget(rateAwareOptions);
     if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
-    if (!options.once) initial = await verifyDispositionedReviewCandidate(target, initial, rateAwareOptions);
+    if (!options.once) initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     printResult({
@@ -1547,7 +1550,7 @@ async function watch(options) {
 
     try {
       current = await readSnapshotRateAware(target, rateAwareOptions);
-      current = await verifyDispositionedReviewCandidate(target, current, rateAwareOptions);
+      current = await verifyDispositionedReviewEvidence(target, current, rateAwareOptions);
     } catch (error) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
@@ -1574,7 +1577,7 @@ async function watch(options) {
   };
   try {
     final = await readSnapshotRateAware(target, finalSnapshotOptions);
-    final = await verifyDispositionedReviewCandidate(target, final, finalSnapshotOptions);
+    final = await verifyDispositionedReviewEvidence(target, final, finalSnapshotOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     finalSnapshotError = error.message;
