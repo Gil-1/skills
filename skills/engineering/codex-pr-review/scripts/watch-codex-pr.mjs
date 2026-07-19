@@ -924,16 +924,7 @@ async function readSnapshot(target, options) {
 }
 
 function snapshotHasMore(pr) {
-  return Boolean(
-    connectionHasMore(pr.timelineItems)
-    || connectionHasMore(pr.reactions)
-    || connectionHasMore(pr.comments)
-    || connectionHasMore(pr.reviews)
-    || connectionHasMore(pr.reviewThreads)
-    || (pr.comments?.nodes ?? []).some(commentHasMoreReactions)
-    || (pr.reviews?.nodes ?? []).some(reviewHasMoreCheapFeedback)
-    || (pr.reviewThreads?.nodes ?? []).some(threadHasMoreCheapFeedback),
-  );
+  return connectionHasMore(pr.timelineItems) || completionSnapshotHasMore(pr);
 }
 
 function completionSnapshotHasMore(pr) {
@@ -1067,7 +1058,7 @@ function summarize(pr, options = {}) {
     .map((thread) => {
       const comments = thread.comments.filter((comment) =>
         !freshFeedbackItemIds.has(comment.id)
-        && activeThreadCommentIsFresh(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
+        && feedbackItemIsFresh(comment, statusFreshAfter, pr.headRefOid, latestReviewRequestAt),
       );
       return {
         ...thread,
@@ -1281,15 +1272,6 @@ function feedbackItemCoversCurrentHead(item, statusFreshAfter, headRefOid, lates
   return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
 }
 
-function activeThreadCommentIsFresh(item, statusFreshAfter, headRefOid, latestReviewRequestAt) {
-  if (item.validityReaction) return false;
-  if (item.reviewedCommitOid && headRefOid) {
-    return commitMatchesHead(item.reviewedCommitOid, headRefOid)
-      && isFreshTimestamp(item.updatedAt ?? item.createdAt, latestReviewRequestAt);
-  }
-  return isFreshTimestamp(item.updatedAt ?? item.createdAt, statusFreshAfter);
-}
-
 function feedbackItemTimestamp(item) {
   return item.updatedAt ?? item.createdAt;
 }
@@ -1439,11 +1421,26 @@ function immediateEvent(snapshot, expectedHead) {
 }
 
 function dispositionedReviewIsComplete(snapshot) {
+  return dispositionedReviewCandidate(snapshot)
+    && !snapshot.completionSnapshotTruncated;
+}
+
+function dispositionedReviewCandidate(snapshot) {
   return snapshot.status === "none"
-    && !snapshot.completionSnapshotTruncated
     && snapshot.currentHeadFeedbackCount > 0
     && snapshot.currentHeadFeedbackCount === snapshot.dispositionedCurrentHeadFeedbackCount
     && snapshot.currentHeadActiveCodexThreadCount === 0;
+}
+
+async function verifyDispositionedReviewCandidate(target, snapshot, options) {
+  if (
+    options.fullHistory
+    || !snapshot.completionSnapshotTruncated
+    || !dispositionedReviewCandidate(snapshot)
+  ) {
+    return snapshot;
+  }
+  return readSnapshotRateAware(target, { ...options, fullHistory: true });
 }
 
 function changeEvent(previous, current) {
@@ -1491,6 +1488,7 @@ async function watch(options) {
     target = await resolveTarget(rateAwareOptions);
     if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
+    if (!options.once) initial = await verifyDispositionedReviewCandidate(target, initial, rateAwareOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     printResult({
@@ -1537,7 +1535,11 @@ async function watch(options) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
     }
-    if (!cheapStatusChanged(lastCheapStatus, cheapStatus) && current.currentHeadFeedbackCount === 0) {
+    if (
+      !cheapStatusChanged(lastCheapStatus, cheapStatus)
+      && current.currentHeadFeedbackCount === 0
+      && current.currentHeadActiveCodexThreadCount === 0
+    ) {
       lastCheapStatus = cheapStatus;
       continue;
     }
@@ -1545,6 +1547,7 @@ async function watch(options) {
 
     try {
       current = await readSnapshotRateAware(target, rateAwareOptions);
+      current = await verifyDispositionedReviewCandidate(target, current, rateAwareOptions);
     } catch (error) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
@@ -1565,11 +1568,13 @@ async function watch(options) {
 
   let final = current;
   let finalSnapshotError;
+  const finalSnapshotOptions = {
+    ...rateAwareOptions,
+    deadlineMs: Date.now() + Math.min(intervalMs, 60 * 1000),
+  };
   try {
-    final = await readSnapshotRateAware(target, {
-      ...rateAwareOptions,
-      deadlineMs: Date.now() + Math.min(intervalMs, 60 * 1000),
-    });
+    final = await readSnapshotRateAware(target, finalSnapshotOptions);
+    final = await verifyDispositionedReviewCandidate(target, final, finalSnapshotOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     finalSnapshotError = error.message;

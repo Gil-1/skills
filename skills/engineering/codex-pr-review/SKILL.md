@@ -20,7 +20,7 @@ Fixer sub-agent:
 
 - Refresh PR state, read the full body for every supplied item/thread, apply Review Discipline and Severity Handling, fix valid in-scope blockers, run checks, commit, and push.
 - When assigned a repeated-pattern packet, investigate the shared root cause before patching another individual symptom.
-- Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, root-cause notes when relevant, files, checks, commits, push result, the UTC timestamp captured immediately before any push, and blockers.
+- Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, root-cause notes when relevant, files, checks, commits, push result, the UTC timestamp captured immediately after confirming any pushed remote head, and blockers.
 
 ## Review Discipline
 
@@ -65,8 +65,8 @@ Fixer sub-agent:
 - Default watcher behavior: poll every 120 seconds for up to 30 minutes, wait for GitHub GraphQL quota recovery when remaining budget is low, use minimal GraphQL status checks containing PR metadata and recent PR-body reactions only, and bound feedback snapshots to recent comments/reviews/threads (`--feedback-limit`, default 50). Once current-head feedback exists, refresh the bounded feedback snapshot every interval so feedback dispositions and thread resolution are observed promptly.
 - Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
 - Treat `codex_approved` and `codex_review_complete` as successful validation. The latter is emitted when at least one current-head finding exists, every such finding has a validity disposition, no current-head Codex thread remains active, and the relevant status and feedback evidence is not truncated. A separate `PullRequestReview` object is not required when current-head feedback proves the review occurred.
-- Before a workflow-owned push, capture the current UTC timestamp; after the push, record the full head SHA. Run the watcher with `--expected-head <sha> --status-fresh-after <timestamp>` and carry both values across resumptions. This ignores a previous head's lingering `THUMBS_UP` until Codex publishes the new review cycle's `EYES`, `THUMBS_UP`, or current-head feedback.
-- Use `--full-history` only for manual diagnostics or the targeted P0/P1 safety pass because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
+- After a workflow-owned push, confirm the remote full head SHA and then capture the current UTC timestamp. Run the watcher with `--expected-head <sha> --status-fresh-after <timestamp>` and carry both values across resumptions. This ignores a previous head's lingering `THUMBS_UP` until Codex publishes the new review cycle's `EYES`, `THUMBS_UP`, or current-head feedback.
+- Use `--full-history` only for manual diagnostics, the targeted P0/P1 safety pass, or the watcher's one targeted proof when an otherwise-complete dispositioned review has truncated evidence because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
 - Treat Codex's fresh PR-body reaction for the current review cycle as its status: `EYES` means reviewing, `THUMBS_UP` means approved, no reaction with current-head Codex feedback means the review returned comments, and no reaction without current-head Codex feedback means Codex has not reviewed the PR. Reactions on feedback are validity markers only.
 
 ## Loop
