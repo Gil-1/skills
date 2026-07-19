@@ -319,8 +319,9 @@ async function linkOpenCodeSkills(publishedSources, skillPaths) {
   }
 }
 
-async function pruneDanglingCanonicalLinks(skillPaths) {
+async function reconcilePublishedSkillLinks(publishedSources, lock, skillPaths) {
   const canonicalSkillsDir = path.resolve(skillPaths.canonicalSkillsDir);
+  const publishedNames = new Set(publishedSources.flatMap((source) => source.names));
 
   for (const root of [
     skillPaths.claudeSkillsDir,
@@ -339,7 +340,11 @@ async function pruneDanglingCanonicalLinks(skillPaths) {
       if (!entry.isSymbolicLink()) continue;
       const linkPath = path.join(root, entry.name);
       const targetPath = path.resolve(root, await readlink(linkPath));
-      if (path.dirname(targetPath) !== canonicalSkillsDir || (await pathExists(targetPath))) continue;
+      if (path.dirname(targetPath) !== canonicalSkillsDir || publishedNames.has(entry.name)) continue;
+
+      const lockEntry = lock.skills[entry.name];
+      const ownedByManagedSource = publishedSources.some((source) => sourceOwns(lockEntry, source.repository));
+      if ((lockEntry && !ownedByManagedSource) || (!lockEntry && (await pathExists(targetPath)))) continue;
       await rm(linkPath, { force: true });
     }
   }
@@ -403,7 +408,7 @@ async function updateSkills({ dryRun = false } = {}) {
   await linkOpenCodeSkills(publishedSources, skillPaths);
   const updatedLock = await verifyInstallation(publishedSources, skillPaths, startedAt);
   await pruneStaleSkills(staleSkills, updatedLock, skillPaths);
-  await pruneDanglingCanonicalLinks(skillPaths);
+  await reconcilePublishedSkillLinks(publishedSources, updatedLock, skillPaths);
   console.log("Claude Code, Codex, and OpenCode skills are synchronized.");
 }
 
@@ -414,4 +419,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   });
 }
 
-export { buildAddArgs, linkOpenCodeSkills, pruneDanglingCanonicalLinks, resolveSkillPaths };
+export { buildAddArgs, linkOpenCodeSkills, reconcilePublishedSkillLinks, resolveSkillPaths };
