@@ -66,8 +66,7 @@ Fixer sub-agent:
 - Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
 - Treat `codex_approved` and `codex_review_complete` as successful validation. The latter is emitted when Codex reviewed the current head, at least one current-head finding exists, every such finding has a validity disposition, no Codex thread remains active, and the snapshot is not truncated.
 - Use `--full-history` only for manual diagnostics or the targeted P0/P1 safety pass because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
-- Treat Codex's PR-body reaction as its status: `EYES` means reviewing, `THUMBS_UP` means approved, and no reaction means no status.
-- Treat current-head Codex comments, reviews, inline comments, and review threads as feedback signals even without a PR-body `EYES` or `THUMBS_UP` reaction. Reactions on comments, reviews, or inline threads are validity markers only.
+- Treat Codex's PR-body reaction as its status: `EYES` means reviewing, `THUMBS_UP` means approved, no reaction with Codex feedback means the review returned comments, and no reaction without Codex feedback means Codex has not reviewed the PR. Reactions on feedback are validity markers only.
 
 ## Loop
 
