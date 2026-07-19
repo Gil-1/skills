@@ -11,8 +11,8 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 
 ## Command Chain
 
-- The **ticket orchestrator** is the only user-facing role; it delegates per-ticket delivery to conductors.
-- The orchestrator spawns one **ticket conductor** per implementable ticket and waits for conductor handoffs.
+- The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user and resumes the same task chain with the answer.
+- The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree and branch.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 
@@ -38,7 +38,7 @@ Accept each referenced review skill's terminal outcome for the HEAD it reports; 
 
 For each assigned ticket:
 
-1. Prepare the worktree. Create or verify the dedicated worktree and branch from the declared base. Done when `git status --short` is known and the branch contains only the ticket's intended work.
+1. Prepare the worktree. Create or verify only the ticket's assigned worktree and branch from the declared base; never create or select an alternative worktree for the ticket. Done when `git status --short` is known and the branch contains only the ticket's intended work.
 2. Implement. Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations. Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`. Done when implementation commits, checks, acceptance evidence, assumptions, and blockers are returned.
 3. Code review. Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from. Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket; when it promises more than the ticket requires, recommend narrowing the documentation. Add the report to the ticket when the tracker supports comments. Done when the report makes blockers, missing implementation, and fix recommendations clear.
 4. Fix code review. From the `code-review` report, spawn a fix worker for necessary in-scope findings. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs. Done when scoped fixes are committed and targeted checks rerun, or the worker returns a blocker or out-of-scope result with evidence.
