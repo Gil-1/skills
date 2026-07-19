@@ -66,7 +66,7 @@ Fixer sub-agent:
 - Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
 - The watcher emits `codex_review_complete` when Codex reviewed the current head, at least one current-head finding exists, every such finding has a validity disposition, no Codex thread remains active, and the snapshot is not truncated. This is a successful reviewed terminal state, not a gate override.
 - Use `--full-history` only for manual diagnostics or the targeted P0/P1 safety pass because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
-- Treat the latest fresh PR-body reaction from `chatgpt-codex-connector` or `chatgpt-codex-connector[bot]` as the authoritative Codex status: `EYES` means reviewing and `THUMBS_UP` means approved. A clean review normally emits only the PR-body `THUMBS_UP`; do not require a `PullRequestReview` or bind that reaction to a commit SHA. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
+- Treat Codex's PR-body reaction as its status: `EYES` means reviewing, `THUMBS_UP` means approved, and no reaction means no status.
 - Treat current-head Codex comments, reviews, inline comments, and review threads as feedback signals even without a PR-body `EYES` or `THUMBS_UP` reaction. Reactions on comments, reviews, or inline threads are validity markers only.
 
 ## Loop
