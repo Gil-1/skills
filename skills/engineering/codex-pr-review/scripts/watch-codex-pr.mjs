@@ -2,7 +2,6 @@
 
 import { execFile } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1559,11 +1558,7 @@ async function watch(options) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  watch(parseArgs(process.argv.slice(2))).catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-}
-
-export { immediateEvent, summarize };
+watch(parseArgs(process.argv.slice(2))).catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
