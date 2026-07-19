@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -319,6 +319,32 @@ async function linkOpenCodeSkills(publishedSources, skillPaths) {
   }
 }
 
+async function pruneDanglingCanonicalLinks(skillPaths) {
+  const canonicalSkillsDir = path.resolve(skillPaths.canonicalSkillsDir);
+
+  for (const root of [
+    skillPaths.claudeSkillsDir,
+    skillPaths.legacyCodexSkillsDir,
+    skillPaths.opencodeSkillsDir,
+  ]) {
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isSymbolicLink()) continue;
+      const linkPath = path.join(root, entry.name);
+      const targetPath = path.resolve(root, await readlink(linkPath));
+      if (path.dirname(targetPath) !== canonicalSkillsDir || (await pathExists(targetPath))) continue;
+      await rm(linkPath, { force: true });
+    }
+  }
+}
+
 async function writeSkillLock(lockPath, lock) {
   await mkdir(path.dirname(lockPath), { recursive: true });
   const temporaryPath = `${lockPath}.${process.pid}.tmp`;
@@ -377,6 +403,7 @@ async function updateSkills({ dryRun = false } = {}) {
   await linkOpenCodeSkills(publishedSources, skillPaths);
   const updatedLock = await verifyInstallation(publishedSources, skillPaths, startedAt);
   await pruneStaleSkills(staleSkills, updatedLock, skillPaths);
+  await pruneDanglingCanonicalLinks(skillPaths);
   console.log("Claude Code, Codex, and OpenCode skills are synchronized.");
 }
 
@@ -387,4 +414,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   });
 }
 
-export { buildAddArgs, linkOpenCodeSkills, resolveSkillPaths };
+export { buildAddArgs, linkOpenCodeSkills, pruneDanglingCanonicalLinks, resolveSkillPaths };

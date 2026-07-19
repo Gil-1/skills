@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildAddArgs, linkOpenCodeSkills, resolveSkillPaths } from "../scripts/update-skills.mjs";
+import {
+  buildAddArgs,
+  linkOpenCodeSkills,
+  pruneDanglingCanonicalLinks,
+  resolveSkillPaths,
+} from "../scripts/update-skills.mjs";
 
 test("update installs skills for OpenCode", () => {
   const args = buildAddArgs({ repository: "Gil-1/skills", names: ["codex-pr-review"] });
@@ -46,4 +51,27 @@ test("update replaces stale OpenCode copies with canonical links", async (contex
   );
 
   assert.equal(await readlink(staleDir), canonicalDir);
+});
+
+test("update removes only dangling links to canonical skills", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "skills-update-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const canonicalSkillsDir = path.join(root, "agents");
+  const claudeSkillsDir = path.join(root, "claude");
+  const staleLink = path.join(claudeSkillsDir, "stale-skill");
+  const unrelatedLink = path.join(claudeSkillsDir, "unrelated-skill");
+  await mkdir(canonicalSkillsDir, { recursive: true });
+  await mkdir(claudeSkillsDir, { recursive: true });
+  await symlink(path.join(canonicalSkillsDir, "stale-skill"), staleLink, "dir");
+  await symlink(path.join(root, "external", "unrelated-skill"), unrelatedLink, "dir");
+
+  await pruneDanglingCanonicalLinks({
+    canonicalSkillsDir,
+    claudeSkillsDir,
+    legacyCodexSkillsDir: path.join(root, "missing-codex"),
+    opencodeSkillsDir: path.join(root, "missing-opencode"),
+  });
+
+  await assert.rejects(readlink(staleLink), { code: "ENOENT" });
+  assert.equal(await readlink(unrelatedLink), path.join(root, "external", "unrelated-skill"));
 });
