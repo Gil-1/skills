@@ -9,10 +9,10 @@ description: Run Codex validation on an existing GitHub PR. Use when waiting for
 
 Orchestrator:
 
-- Own watcher runs, PR-body status interpretation, current-head approval checks, fixer delegation, worktree discipline, and final reporting.
+- Own watcher runs, PR-body status interpretation, fixer delegation, worktree discipline, and final reporting.
 - Keep PR review/fix work in a dedicated git worktree. Reuse a caller-supplied worktree, such as from `handle-tickets`, after verifying PR branch and current head; otherwise create or verify one before edits/checks.
 - Track rounds by head SHA, files, themes, subsystems, accepted/rejected findings, fixes pushed, and checks to detect repeated patterns.
-- Send the fixer packet: PR URL/number, branches, worktree, current `headRefOid`, watcher-fresh `feedbackItems` and `activeCodexThreads`, parsed priorities, watcher snapshot counts, P0/P1 safety-pass results when needed, Review Discipline scope baseline, related prior Codex comments for repeated patterns, prior `code-review` or `review-fix` outcomes, checks, and push policy. Include enough spec context to classify findings; do not ask for a fresh full `code-review` unless a finding specifically requires it.
+- Send the fixer packet: PR URL/number, branches, worktree, current `headRefOid`, the current review-cycle freshness boundary when known, watcher-fresh `feedbackItems` and `activeCodexThreads`, parsed priorities, watcher snapshot counts, P0/P1 safety-pass results when needed, Review Discipline scope baseline, related prior Codex comments for repeated patterns, prior `code-review` or `review-fix` outcomes, checks, and push policy. Include enough spec context to classify findings; do not ask for a fresh full `code-review` unless a finding specifically requires it.
 - Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
 - If no fixer sub-agent can be spawned, handle active comments in the parent using Review Discipline and Severity Handling, run checks, and report the fallback.
 
@@ -20,7 +20,7 @@ Fixer sub-agent:
 
 - Refresh PR state, read the full body for every supplied item/thread, apply Review Discipline and Severity Handling, fix valid in-scope blockers, run checks, commit, and push.
 - When assigned a repeated-pattern packet, investigate the shared root cause before patching another individual symptom.
-- Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, root-cause notes when relevant, files, checks, commits, push result, and blockers.
+- Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, root-cause notes when relevant, files, checks, commits, push result, the UTC timestamp captured immediately after confirming any pushed remote head, and blockers.
 
 ## Review Discipline
 
@@ -62,24 +62,25 @@ Fixer sub-agent:
 ## Watcher And Status
 
 - Run the watcher in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`. Treat completion as the wake signal, then inspect the PR again with `gh`; background it only when a real thread-wakeup mechanism is wired to the process.
-- Default watcher behavior: poll every 120 seconds for up to 30 minutes, wait for GitHub GraphQL quota recovery when remaining budget is low, use minimal GraphQL status checks containing PR metadata and recent PR-body reactions only, and bound feedback snapshots to recent comments/reviews/threads (`--feedback-limit`, default 50).
-- Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
-- Use `--full-history` only for manual diagnostics or the targeted P0/P1 safety pass because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
-- Treat PR-body reactions from `chatgpt-codex-connector` or `chatgpt-codex-connector[bot]` as the only Codex approval/reviewing status signal. Approval counts only when tied to the current `headRefOid`. Use GraphQL or `gh pr view --json reactionGroups`, not REST issue reactions.
-- Treat current-head Codex comments, reviews, inline comments, and review threads as feedback signals even without a PR-body `EYES` or `THUMBS_UP` reaction. Reactions on comments, reviews, or inline threads are validity markers only.
+- Default watcher behavior: poll every 120 seconds for up to 30 minutes, wait for GitHub GraphQL quota recovery when remaining budget is low, use minimal GraphQL status checks containing PR metadata and recent PR-body reactions only, and bound feedback snapshots to recent comments/reviews/threads (`--feedback-limit`, default 50). Once current-head feedback exists, refresh the bounded feedback snapshot every interval so feedback dispositions and thread resolution are observed promptly.
+- Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; markerless feedback remains actionable but does not prove current-head completion. Total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
+- Treat `codex_approved` and `codex_review_complete` as successful validation. The latter is emitted when at least one current-head finding exists, every such finding has a validity disposition, no current-head Codex thread remains active, and the relevant status and feedback evidence is not truncated. A separate `PullRequestReview` object is not required when current-head feedback proves the review occurred.
+- After a workflow-owned push, confirm the remote full head SHA and then capture the current UTC timestamp. Run the watcher with `--expected-head <sha> --status-fresh-after <timestamp>` and carry both values across resumptions. This ignores a previous head's lingering `THUMBS_UP` until Codex publishes the new review cycle's `EYES`, `THUMBS_UP`, or current-head feedback.
+- Use `--full-history` only for manual diagnostics, the targeted P0/P1 safety pass, or the watcher's one targeted proof when truncated evidence may hide completion because it pages every PR comment, review, thread, and reaction and can exhaust GraphQL quota on busy PRs.
+- Treat Codex's fresh PR-body reaction for the current review cycle as its status: `EYES` means reviewing, `THUMBS_UP` means approved, no reaction with current-head Codex feedback means the review returned comments, and no reaction without current-head Codex feedback means Codex has not reviewed the PR. Reactions on feedback are validity markers only.
 
 ## Loop
 
 1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
 2. Create or verify the dedicated worktree for the PR branch before edits/checks, reusing a caller-provided worktree when present. Record the worktree and current `headRefOid` in every fixer packet and final report.
 3. Resolve merge conflicts before waiting for Codex. Commit, push, and restart the loop.
-4. If the watcher reports `codex_approved`, confirm `gh pr view --json headRefOid,state,statusCheckRollup` and require `headRefOid` to equal watcher `current.headRefOid`; if it differs, restart from the new PR head. Then run `git fetch --all --prune --tags`, report success, and do not request another review for cleaner wording or a second opinion.
+4. If the watcher reports successful validation, re-inspect the PR with `gh pr view --json headRefOid,state,statusCheckRollup` and require its `headRefOid` to equal watcher `current.headRefOid`; if it differs, restart from the new head with its review-cycle boundary. Then run `git fetch --all --prune --tags`, report the validation mode, and do not request another review for cleaner wording or a second opinion.
 5. If Codex is reviewing, run the watcher and re-inspect the PR. If watcher output includes current-head `feedbackItems` or `activeCodexThreads`, handle them through Review Discipline and Severity Handling. If the watcher times out while current status is still reviewing, stop and report Codex as stuck or timed out; do not start another watcher run for the same head without new input.
 6. If no PR-body status exists, run the watcher with `--timeout 300` as the silent-start check, re-inspect the PR, and handle any current-head feedback before deciding whether to request Codex.
 7. If that 5-minute silent-start check finds no PR-body status and no current-head top-level PR comment, review, inline comment, or review thread from Codex, add one PR comment exactly `@codex review`, then run the watcher again. If that cycle times out, report Codex as unavailable, disabled, or stuck.
 8. For fresh feedback, prefer one fixer sub-agent. Use multiple fixers only for isolated worktrees or clearly non-overlapping fixes with an explicit push order. The orchestrator delegates fixes; the parent fixes only when no fixer can be spawned.
 9. After the fixer pushes fixes or reports no code change was needed, classify the round against the scope baseline and update round history. Run Repeated Patterns before another narrow fixer pass or review request if feedback repeats on the same file, theme, subsystem, or invariant, or after every third completed feedback round. If the root-cause fix is pushed, restart from the current PR head so Codex can validate it.
-10. Stop only when Codex validates, times out, blocks on GitHub, or a real blocker remains after root-cause investigation.
+10. Stop only when Codex validation succeeds, times out, blocks on GitHub, or a real blocker remains after root-cause investigation.
 
 ## Guardrails
 
@@ -91,6 +92,6 @@ Fixer sub-agent:
 
 ## Terminal Reporting
 
-- For every terminal outcome, include PR URL, whether Codex validated it, `merge_ready`, reviewed head SHA, current PR state, whether local git data was fetched, commits pushed, whether a P0/P1 safety pass ran, whether a repeated-pattern investigation ran, and handled Codex comments by priority and disposition: fixed/accepted, rejected, stale/already-fixed, follow-up, blocked, or deferred, with validity reactions and no-fix rationales.
-- For any terminal outcome that is not current-head Codex validation, include a continuation packet with `merge_ready: false`, PR URL, branch, base, reviewed head SHA, linked ticket or PRD URLs, current PR state, checks and mergeability, Codex disposition, clustered file/theme/comment evidence, P0/P1 dispositions, root-cause investigation notes when relevant, commits pushed, and next action plus owner.
+- For every terminal outcome, include PR URL, whether Codex validated it, validation mode when successful, `merge_ready`, expected and observed PR head SHAs, the review-cycle freshness boundary when known, current PR state, whether local git data was fetched, commits pushed, whether a P0/P1 safety pass ran, whether a repeated-pattern investigation ran, and handled Codex comments by priority and disposition: fixed/accepted, rejected, stale/already-fixed, follow-up, blocked, or deferred, with validity reactions and no-fix rationales.
+- For any terminal outcome without successful validation, include a continuation packet with `merge_ready: false`, PR URL, branch, base, expected and observed PR head SHAs, the review-cycle freshness boundary when known, linked ticket or PRD URLs, current PR state, checks and mergeability, Codex disposition, clustered file/theme/comment evidence, P0/P1 dispositions, root-cause investigation notes when relevant, commits pushed, and next action plus owner.
 - For `blocked`, choose the smallest next action: answer a product/scope question, authorize a contract change, move work to the correct owner boundary, fix a GitHub/checks/merge blocker, or wait for Codex/GitHub availability. If work remains in scope, continue on the same PR instead of deferring it.
