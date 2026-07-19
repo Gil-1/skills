@@ -1049,10 +1049,7 @@ function summarize(pr) {
     ...freshFeedbackItems.map(feedbackItemTimestamp),
     ...freshActiveCodexThreads.flatMap((thread) => thread.comments.map(feedbackItemTimestamp)),
   );
-  const approvalFreshAfter = newestTimestamp(statusFreshAfter, currentHeadReview?.submittedAt, freshFeedbackAt);
-  const approvalMatchesCurrentHead = Boolean(currentHeadReview)
-    || reviewRequestCoversHead(pr, latestReviewRequestAt);
-  const status = codexStatusFromReactions(bodyReactions, approvalFreshAfter, approvalMatchesCurrentHead);
+  const status = codexStatusFromReactions(bodyReactions, statusFreshAfter);
 
   return {
     number: pr.number,
@@ -1070,8 +1067,6 @@ function summarize(pr) {
     currentHeadReview,
     statusFreshAfter,
     freshFeedbackAt,
-    approvalFreshAfter,
-    approvalMatchesCurrentHead,
     status,
     bodyReactions,
     feedbackItems,
@@ -1088,8 +1083,6 @@ function summarize(pr) {
       headRefOid: pr.headRefOid,
       headRefPushedAt,
       statusFreshAfter,
-      approvalFreshAfter,
-      approvalMatchesCurrentHead,
       status,
       state: pr.state,
       bodyReactions,
@@ -1174,43 +1167,18 @@ function compareByDateThenContent(a, b) {
   return String(a.createdAt).localeCompare(String(b.createdAt)) || a.content.localeCompare(b.content);
 }
 
-function codexStatusFromReactions(bodyReactions, statusFreshAfter, approvalMatchesCurrentHead) {
+function codexStatusFromReactions(bodyReactions, statusFreshAfter) {
   const newestStatusReaction = bodyReactions
     .filter((reaction) => STATUS_REACTION_CONTENTS.has(reaction.content))
     .filter((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))
     .at(-1);
 
-  if (newestStatusReaction?.content === "THUMBS_UP" && approvalMatchesCurrentHead) return "approved";
+  if (newestStatusReaction?.content === "THUMBS_UP") return "approved";
   if (newestStatusReaction?.content === "EYES") return "reviewing";
   if (bodyReactions.some((reaction) => isFreshTimestamp(reaction.createdAt, statusFreshAfter))) {
     return "other-reaction";
   }
   return "none";
-}
-
-function reviewRequestCoversHead(pr, latestReviewRequestAt) {
-  if (!latestReviewRequestAt) return false;
-  return reviewRequestFollowsHeadCommit(pr, latestReviewRequestAt);
-}
-
-function reviewRequestFollowsHeadCommit(pr, latestReviewRequestAt) {
-  const latestReviewRequestTime = Date.parse(latestReviewRequestAt);
-  if (Number.isNaN(latestReviewRequestTime)) return false;
-  let currentHeadIndex = -1;
-  let latestReviewRequestIndex = -1;
-  for (const [index, item] of (pr.timelineItems?.nodes ?? []).entries()) {
-    if (item.__typename === "PullRequestCommit" && commitMatchesHead(item.commit?.oid, pr.headRefOid)) {
-      currentHeadIndex = index;
-    }
-    if (
-      item.__typename === "IssueComment"
-      && isCodexReviewRequest(item)
-      && Date.parse(item.createdAt ?? "") === latestReviewRequestTime
-    ) {
-      latestReviewRequestIndex = index;
-    }
-  }
-  return currentHeadIndex >= 0 && latestReviewRequestIndex > currentHeadIndex;
 }
 
 function latestCodexReviewRequestAt(comments) {
@@ -1398,8 +1366,6 @@ function fingerprint(summary) {
     headRefOid: summary.headRefOid,
     headRefPushedAt: summary.headRefPushedAt,
     statusFreshAfter: summary.statusFreshAfter,
-    approvalFreshAfter: summary.approvalFreshAfter,
-    approvalMatchesCurrentHead: summary.approvalMatchesCurrentHead,
     status: summary.status,
     state: summary.state,
     bodyReactions: summary.bodyReactions.map((reaction) => `${reaction.content}:${reaction.createdAt}`),

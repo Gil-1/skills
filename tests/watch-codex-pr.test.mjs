@@ -9,7 +9,12 @@ import {
 const headRefOid = "943dd4ee47223e7937efec7f8225c46901b5cf45";
 const submittedAt = "2026-07-18T10:49:53Z";
 
-function codexReviewFixture({ disposition, resolved = true, bodyReactions = [] } = {}) {
+function codexReviewFixture({
+  disposition,
+  resolved = true,
+  bodyReactions = [],
+  reviewHeadRefOid = headRefOid,
+} = {}) {
   const reviewComment = {
     id: "review-comment-1",
     url: "https://example.test/review-comment-1",
@@ -28,10 +33,10 @@ function codexReviewFixture({ disposition, resolved = true, bodyReactions = [] }
   const review = {
     id: "review-1",
     url: "https://example.test/review-1",
-    body: "Codex Review: automated review suggestions. Reviewed commit: `943dd4ee47`",
+    body: `Codex Review: automated review suggestions. Reviewed commit: \`${reviewHeadRefOid.slice(0, 10)}\``,
     state: "COMMENTED",
     submittedAt,
-    commit: { oid: headRefOid },
+    commit: { oid: reviewHeadRefOid },
     author: { login: "chatgpt-codex-connector" },
     reactions: { nodes: [], pageInfo: {} },
     comments: { nodes: [reviewComment], pageInfo: {} },
@@ -108,6 +113,21 @@ test("keeps explicit Codex approval as the preferred terminal event", () => {
     }],
   }));
 
+  assert.equal(snapshot.status, "approved");
+  assert.equal(immediateEvent(snapshot), "codex_approved");
+});
+
+test("accepts a clean PR-body thumbs-up without a current-head review object", () => {
+  const snapshot = summarize(codexReviewFixture({
+    reviewHeadRefOid: "17fe9f94dec4d9736f8d42b2a75d5e36d8ef7a55",
+    bodyReactions: [{
+      content: "THUMBS_UP",
+      createdAt: "2026-07-19T13:26:53Z",
+      user: { login: "chatgpt-codex-connector[bot]" },
+    }],
+  }));
+
+  assert.equal(snapshot.currentHeadReview, null);
   assert.equal(snapshot.status, "approved");
   assert.equal(immediateEvent(snapshot), "codex_approved");
 });
