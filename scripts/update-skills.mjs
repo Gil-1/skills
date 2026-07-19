@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createNpxInvocation } from "./link-skills.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
-const agents = ["claude-code", "codex"];
+const agents = ["claude-code", "codex", "opencode"];
 const skillsCli = "skills@1.5.19";
 const sources = [
   {
@@ -28,7 +28,7 @@ const sources = [
 const usage = `Usage:
   node scripts/update-skills.mjs [--dry-run]
 
-Refreshes the published Matt Pocock and Gil skills for Claude Code and Codex,
+Refreshes the published Matt Pocock and Gil skills for Claude Code, Codex, and OpenCode,
 then removes skills those sources no longer publish.
 `;
 
@@ -134,6 +134,7 @@ function resolveSkillPaths({ env = process.env, home = homedir() } = {}) {
     canonicalSkillsDir: path.join(home, ".agents", "skills"),
     claudeSkillsDir: path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "skills"),
     legacyCodexSkillsDir: path.join(env.CODEX_HOME || path.join(home, ".codex"), "skills"),
+    opencodeSkillsDir: path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode", "skills"),
   };
 }
 
@@ -182,7 +183,11 @@ async function assertNoLocalOwnershipConflicts(publishedSources, lock, skillPath
       }
 
       if (!entry) {
-        const installedPaths = [skillPaths.canonicalSkillsDir, skillPaths.claudeSkillsDir].map((root) =>
+        const installedPaths = [
+          skillPaths.canonicalSkillsDir,
+          skillPaths.claudeSkillsDir,
+          skillPaths.opencodeSkillsDir,
+        ].map((root) =>
           path.join(root, name),
         );
         if ((await Promise.all(installedPaths.map(pathExists))).some(Boolean)) {
@@ -270,18 +275,27 @@ async function verifyInstallation(publishedSources, skillPaths, startedAt) {
       const entry = lock.skills[name];
       const canonicalDir = path.join(skillPaths.canonicalSkillsDir, name);
       const claudeDir = path.join(skillPaths.claudeSkillsDir, name);
+      const opencodeDir = path.join(skillPaths.opencodeSkillsDir, name);
       const canonicalSkill = path.join(canonicalDir, "SKILL.md");
       const claudeSkill = path.join(claudeDir, "SKILL.md");
+      const opencodeSkill = path.join(opencodeDir, "SKILL.md");
       if (!(await pathExists(canonicalSkill))) failures.push(`missing ${canonicalSkill}`);
       if (!(await pathExists(claudeSkill))) failures.push(`missing ${claudeSkill}`);
+      if (!(await pathExists(opencodeSkill))) failures.push(`missing ${opencodeSkill}`);
       if (!sourceOwns(entry, source.repository)) failures.push(`wrong lock source for ${name}`);
       if (!(Date.parse(entry?.updatedAt) >= startedAt)) failures.push(`stale lock entry for ${name}`);
-      if ((await pathExists(canonicalSkill)) && (await pathExists(claudeSkill))) {
-        const [canonicalHash, claudeHash] = await Promise.all([
+      if (
+        (await pathExists(canonicalSkill))
+        && (await pathExists(claudeSkill))
+        && (await pathExists(opencodeSkill))
+      ) {
+        const [canonicalHash, claudeHash, opencodeHash] = await Promise.all([
           hashSkillDirectory(canonicalDir),
           hashSkillDirectory(claudeDir),
+          hashSkillDirectory(opencodeDir),
         ]);
         if (canonicalHash !== claudeHash) failures.push(`Claude Code content differs for ${name}`);
+        if (canonicalHash !== opencodeHash) failures.push(`OpenCode content differs for ${name}`);
       }
     }
   }
@@ -290,6 +304,19 @@ async function verifyInstallation(publishedSources, skillPaths, startedAt) {
     throw new Error(`Skill update verification failed:\n- ${failures.join("\n- ")}`);
   }
   return lock;
+}
+
+async function linkOpenCodeSkills(publishedSources, skillPaths) {
+  await mkdir(skillPaths.opencodeSkillsDir, { recursive: true });
+
+  for (const source of publishedSources) {
+    for (const name of source.names) {
+      const canonicalDir = path.join(skillPaths.canonicalSkillsDir, name);
+      const opencodeDir = path.join(skillPaths.opencodeSkillsDir, name);
+      await rm(opencodeDir, { recursive: true, force: true });
+      await symlink(canonicalDir, opencodeDir, process.platform === "win32" ? "junction" : "dir");
+    }
+  }
 }
 
 async function writeSkillLock(lockPath, lock) {
@@ -316,6 +343,7 @@ async function pruneStaleSkills(staleSkills, lock, skillPaths) {
       skillPaths.canonicalSkillsDir,
       skillPaths.claudeSkillsDir,
       skillPaths.legacyCodexSkillsDir,
+      skillPaths.opencodeSkillsDir,
     ]) {
       await rm(path.join(root, name), { recursive: true, force: true });
     }
@@ -346,9 +374,10 @@ async function updateSkills({ dryRun = false } = {}) {
   const startedAt = Date.now();
   for (const source of publishedSources) runNpx(buildAddArgs(source));
 
+  await linkOpenCodeSkills(publishedSources, skillPaths);
   const updatedLock = await verifyInstallation(publishedSources, skillPaths, startedAt);
   await pruneStaleSkills(staleSkills, updatedLock, skillPaths);
-  console.log("Claude Code and Codex skills are synchronized.");
+  console.log("Claude Code, Codex, and OpenCode skills are synchronized.");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
@@ -357,3 +386,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
     process.exitCode = 1;
   });
 }
+
+export { buildAddArgs, linkOpenCodeSkills, resolveSkillPaths };
