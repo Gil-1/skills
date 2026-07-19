@@ -47,6 +47,7 @@ Fixer sub-agent:
 - If watcher output is bounded/truncated or could hide current-head unreacted feedback, run a targeted P0/P1 safety pass before claiming no fix work: inspect Codex PR comments, review bodies, review comments, and active non-outdated threads with `gh`/GraphQL or one diagnostic `--full-history` run, then process any current-head P0/P1 normally.
 - Every surfaced item/thread needs a final disposition: fixed and committed; rejected with evidence; stale/already fixed with proof; follow-up/out-of-scope/deferred with a concrete no-fix rationale; or blocked through the continuation packet.
 - Apply `THUMBS_UP` or `THUMBS_DOWN` only after the disposition exists. Group repeated non-P1 findings by root cause/theme before reacting so the fixer can make one coherent fix.
+- Pair every `THUMBS_DOWN` with a brief GitHub reply or comment that references the finding and summarizes its disposition and evidence.
 - Treat watcher-fresh `feedbackItems` and `activeCodexThreads` as findings, not status. Preserve watcher freshness filters: `codex_feedback_changed`, current-head `reviewedCommitOid`, and no existing validity reaction. Do not hand off old comments from previous heads unless surfaced as fresh, related to a repeated-pattern investigation, or found by the targeted P0/P1 safety pass.
 
 ## Repeated Patterns
