@@ -64,7 +64,7 @@ When the ticket orchestrator confirms that a PR is merged, run the **confirmed-m
   2. Confirm that the updated default branch includes the merge.
   3. Create the dependent ticket's branch and worktree from that updated default branch.
 
-Complete when the merge decision is returned and every required **confirmed-merge follow-up** in the current pass is complete.
+Complete when the merge decision is returned and every required **confirmed-merge follow-up** in the current Orchestrator Loop iteration is complete.
 
 ## Merge Lane
 
