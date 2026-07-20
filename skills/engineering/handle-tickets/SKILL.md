@@ -25,11 +25,46 @@ By default, stop at `merge-ready`. Do not treat this workflow alone as authoriza
 
 ## Orchestrator Loop
 
-1. Gather context. Read each ticket body and relevant comments, the linked PRD or spec when present, repo instructions, base branch, and external-action limits. Done when every ticket is marked `ready-for-agent` or the repo's equivalent, excluded, or blocked with a targeted question.
-2. Build the queue. Classify readiness, dependencies, likely conflicts, and parallelization opportunities. Done when every implementable ticket maps to one conductor, worktree, branch, and PR plan.
-3. Schedule conductors. Fan out independent tickets in parallel and queue dependent or conflicting tickets behind explicit prerequisites. Use the Merge Lane below when open PRs have a required merge order. Done when every ticket is running, queued with a reason, excluded, or blocked.
-4. Reconcile handoffs. Verify each conductor returned the required handoff. Done when every ticket meets the Ticket Completion rule, is excluded, or is queued behind an explicit merge prerequisite.
-5. Return the merge decision. Report the PRs, branches, checks, review outcomes, blockers, and any human action needed. When the ticket orchestrator confirms that a PR is merged, it runs PR Cleanup, resumes newly unblocked ticket delivery, and advances its Merge Lane by one candidate. Before starting a ticket that depended on the merged PR, the ticket orchestrator updates the default branch to its latest remote commit, confirms that it includes the merge, then creates the dependent ticket's branch and worktree from that updated default branch.
+### 1. Gather Context
+
+Read each ticket body and relevant comments, the linked PRD or spec when present, repo instructions, base branch, and external-action limits.
+
+Complete when every ticket is marked `ready-for-agent` or the repo's equivalent, excluded, or blocked with a targeted question.
+
+### 2. Build the Queue
+
+Classify readiness, dependencies, likely conflicts, and parallelization opportunities.
+
+Complete when every implementable ticket maps to one conductor, worktree, branch, and PR plan.
+
+### 3. Schedule Conductors
+
+Fan out independent tickets in parallel and queue dependent or conflicting tickets behind explicit prerequisites.
+Use the Merge Lane below when open PRs have a required merge order.
+
+Complete when every ticket is running, queued with a reason, excluded, or blocked.
+
+### 4. Reconcile Handoffs
+
+Verify each conductor returned the required handoff.
+
+Complete when every ticket meets the Ticket Completion rule, is excluded, or is queued behind an explicit merge prerequisite.
+
+### 5. Return the Merge Decision
+
+Report the PRs, branches, checks, review outcomes, blockers, and any human action needed.
+
+When the ticket orchestrator confirms that a PR is merged, run the **confirmed-merge follow-up**:
+
+- Run PR Cleanup.
+- Resume newly unblocked ticket delivery.
+- Advance its Merge Lane by one candidate.
+- Before starting a ticket that depended on the merged PR:
+  1. Update the default branch to its latest remote commit.
+  2. Confirm that the updated default branch includes the merge.
+  3. Create the dependent ticket's branch and worktree from that updated default branch.
+
+Complete when the merge decision is returned and every required **confirmed-merge follow-up** in the current Orchestrator Loop iteration is complete.
 
 ## Merge Lane
 
@@ -37,7 +72,7 @@ When open PRs have required merge orders, the orchestrator runs one serial **mer
 
 The latest conductor comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A hosted-review fixer commit follows the existing review/fix continuation in the Ticket Conductor Loop. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
+A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A hosted-review fixer commit follows the existing transition from **Push PR and Run Codex PR Review** back through **Local Codex Review/Fix** in the Ticket Conductor Loop. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -45,13 +80,101 @@ The merge lane advances after the active candidate merges or the merge order exp
 
 For each assigned ticket:
 
-1. Prepare the worktree. Create or verify only the ticket's assigned worktree and branch from the declared base; never create or select an alternative worktree for the ticket. Done when `git status --short` is known and the branch contains only the ticket's intended work.
-2. Implement. Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations. Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`. Done when implementation commits, checks, acceptance evidence, assumptions, and blockers are returned.
-3. Code review. Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from. Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket; when it promises more than the ticket requires, recommend narrowing the documentation. Add the report to the ticket when the tracker supports comments. Done when the report makes blockers, missing implementation, and fix recommendations clear.
-4. Fix code review. From the `code-review` report, spawn a fix worker for necessary in-scope findings. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs. Done when scoped fixes are committed and targeted checks rerun, or the worker returns a blocker or out-of-scope result with evidence.
-5. Run the local Codex review/fix loop. Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base. From its report, spawn a fix worker for necessary in-scope findings; the fix worker runs relevant checks and commits, then the conductor repeats with a fresh reviewer. Done when no valid in-scope findings remain or a targeted scope blocker requires human action.
-6. Push PR and run Codex PR review. Spawn a PR worker to push the reviewed branch, confirm the resulting remote full head SHA, capture the current UTC timestamp, create or update the PR with non-closing ticket references such as `Refs #123`, then run `codex-pr-review` with that review-cycle freshness boundary and expected head. Carry both values across resumptions. If `codex-pr-review` pushes a fixer commit, return to step 5; retain hosted validation only when that local review leaves its validated head unchanged, otherwise repeat step 6. If the PR worker times out while PR-body Codex status remains `reviewing`, treat its continuation packet as a checkpoint, re-inspect the PR, and resume `codex-pr-review` on the same head; the conductor's resume instruction is new input for the next bounded review run. Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers. Done when local and hosted validation cover the same current head or a targeted blocker requires human action.
-7. Check final scope fit. After `codex-pr-review` validates the PR, spawn a fresh worker with the ticket, linked PRD or spec, fixed point, and full PR diff. Ask whether the diff is the smallest coherent implementation of the requested outcome; treat changed files and non-test LOC as evidence, not thresholds, and flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria. Have the conductor post a dedicated scope-fit comment whose first line is exactly `## Scope fit`. On success, include only `PASS` after the heading. On failure, include `FAIL` followed by concise findings explaining why. Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing. If the PR needs a small scope correction, spawn a fix worker to apply it without dropping required behavior, rerun relevant checks, commit and push, then return to step 5 for a fresh local review followed by step 6 hosted validation, without repeating scope fit. When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading. After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate conductor comment after the latest branch update. If a targeted blocker prevented Codex validation, skip this check and return the blocker. Done when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a product or scope decision prevents a safe correction.
+### 1. Prepare the Worktree
+
+Create or verify only the ticket's assigned worktree and branch from the declared base.
+Never create or select an alternative worktree for the ticket.
+
+Complete when `git status --short` is known and the branch contains only the ticket's intended work.
+
+### 2. Implement
+
+Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations.
+Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
+
+Complete when implementation commits, checks, acceptance evidence, assumptions, and blockers are returned.
+
+### 3. Code Review
+
+Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from.
+Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket.
+When it promises more than the ticket requires, recommend narrowing the documentation.
+Add the report to the ticket when the tracker supports comments.
+
+Complete when the report makes blockers, missing implementation, and fix recommendations clear.
+
+### 4. Fix Code Review
+
+From the `code-review` report, spawn a fix worker for necessary in-scope findings.
+Do not broaden implementation solely to satisfy documentation added or strengthened by the diff.
+Use `diagnosing-bugs` for complex or important bugs.
+
+Complete when scoped fixes are committed and targeted checks rerun, or the worker returns a blocker or out-of-scope result with evidence.
+
+### 5. Local Codex Review/Fix
+
+Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
+From its report, spawn a fix worker for necessary in-scope findings.
+The fix worker runs relevant checks and commits.
+Then the conductor repeats with a fresh reviewer.
+
+Complete when no valid in-scope findings remain or a targeted scope blocker requires human action.
+
+### 6. Push PR and Run Codex PR Review
+
+Spawn a PR worker to perform this sequence:
+
+1. Push the reviewed branch.
+2. Confirm the resulting remote full head SHA.
+3. Capture the current UTC timestamp.
+4. Create or update the PR with non-closing ticket references such as `Refs #123`.
+5. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
+
+Carry both values across resumptions.
+
+If `codex-pr-review` pushes a fixer commit, return to **Local Codex Review/Fix**.
+Retain hosted validation only when that local review leaves its validated head unchanged; otherwise, repeat **Push PR and Run Codex PR Review**.
+
+If the PR worker times out while PR-body Codex status remains `reviewing`:
+
+- Treat its continuation packet as a checkpoint.
+- Re-inspect the PR.
+- Resume `codex-pr-review` on the same head.
+- Use the conductor's resume instruction as new input for the next bounded review run.
+
+Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
+
+Complete when local and hosted validation cover the same current head or a targeted blocker requires human action.
+
+### 7. Check Final Scope Fit
+
+After `codex-pr-review` validates the PR, spawn a fresh worker with the ticket, linked PRD or spec, fixed point, and full PR diff.
+Ask whether the diff is the smallest coherent implementation of the requested outcome.
+Treat changed files and non-test LOC as evidence, not thresholds.
+Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
+
+Have the conductor post a dedicated scope-fit comment whose first line is exactly `## Scope fit`.
+On success, include only `PASS` after the heading.
+On failure, include `FAIL` followed by concise findings explaining why.
+Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
+
+If the PR needs a small scope correction:
+
+1. Spawn a fix worker to apply it without dropping required behavior.
+2. Have the fix worker rerun relevant checks, commit, and push.
+3. Return to **Local Codex Review/Fix** for a fresh local review.
+4. Run hosted validation through **Push PR and Run Codex PR Review**.
+5. Do not repeat **Check Final Scope Fit**.
+
+When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading.
+
+After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate conductor comment after the latest branch update.
+
+If a targeted blocker prevented Codex validation, skip this check and return the blocker.
+
+Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a product or scope decision prevents a safe correction.
+
+### Ticket Conductor Handoff
 
 The conductor handoff must include status, ticket URL, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, merge-ready yes/no, next action, and owner.
 
