@@ -62,12 +62,23 @@ test("update removes local canonical links absent from the published inventories
   const publishedLink = path.join(claudeSkillsDir, "published-skill");
   const otherSourceLink = path.join(claudeSkillsDir, "other-source-skill");
   const unrelatedLink = path.join(claudeSkillsDir, "unrelated-skill");
-  await mkdir(canonicalSkillsDir, { recursive: true });
+  const staleTarget = path.join(canonicalSkillsDir, "stale-skill");
+  const publishedTarget = path.join(canonicalSkillsDir, "published-skill");
+  const otherSourceTarget = path.join(canonicalSkillsDir, "other-source-skill");
+  const unrelatedTarget = path.join(root, "external", "unrelated-skill");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  await Promise.all([
+    mkdir(staleTarget, { recursive: true }),
+    mkdir(publishedTarget, { recursive: true }),
+    mkdir(otherSourceTarget, { recursive: true }),
+    mkdir(unrelatedTarget, { recursive: true }),
+  ]);
   await mkdir(claudeSkillsDir, { recursive: true });
-  await symlink(path.join(canonicalSkillsDir, "stale-skill"), staleLink, "dir");
-  await symlink(path.join(canonicalSkillsDir, "published-skill"), publishedLink, "dir");
-  await symlink(path.join(canonicalSkillsDir, "other-source-skill"), otherSourceLink, "dir");
-  await symlink(path.join(root, "external", "unrelated-skill"), unrelatedLink, "dir");
+  await symlink(staleTarget, staleLink, linkType);
+  await symlink(publishedTarget, publishedLink, linkType);
+  await symlink(otherSourceTarget, otherSourceLink, linkType);
+  await symlink(unrelatedTarget, unrelatedLink, linkType);
+  await rm(staleTarget, { recursive: true, force: true });
 
   await reconcilePublishedSkillLinks(
     [{ repository: "Gil-1/skills", names: ["published-skill"] }],
@@ -81,7 +92,7 @@ test("update removes local canonical links absent from the published inventories
   );
 
   await assert.rejects(readlink(staleLink), { code: "ENOENT" });
-  assert.equal(await readlink(publishedLink), path.join(canonicalSkillsDir, "published-skill"));
-  assert.equal(await readlink(otherSourceLink), path.join(canonicalSkillsDir, "other-source-skill"));
-  assert.equal(await readlink(unrelatedLink), path.join(root, "external", "unrelated-skill"));
+  assert.equal(await readlink(publishedLink), publishedTarget);
+  assert.equal(await readlink(otherSourceLink), otherSourceTarget);
+  assert.equal(await readlink(unrelatedLink), unrelatedTarget);
 });
