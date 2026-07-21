@@ -15,7 +15,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree and branch.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
-- The conductor pushes every ticket commit to the assigned branch as soon as it is handed off, keeping its PR current.
+- Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 
 ## Ticket Completion
@@ -92,9 +92,9 @@ Complete when `git status --short` is known and the branch contains only the tic
 
 Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations.
 Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
-After the worker returns, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
+When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 
-Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned.
+Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned, or a targeted implementation blocker is returned with evidence.
 
 ### 3. Code Review
 
@@ -126,8 +126,8 @@ Complete when no valid in-scope findings remain or a targeted scope blocker requ
 
 Spawn a PR worker to perform this sequence:
 
-1. Confirm the remote full head SHA.
-2. Capture the current UTC timestamp.
+1. Confirm local `HEAD` matches the remote full head SHA.
+2. For a ready PR, use the freshness boundary captured immediately before the latest push; otherwise, capture the current UTC timestamp.
 3. Mark the PR ready for review if it is still a draft.
 4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
 
