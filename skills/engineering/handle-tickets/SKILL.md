@@ -15,6 +15,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree and branch.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
+- The conductor pushes every ticket commit to the assigned branch as soon as it is handed off, keeping its PR current.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 
 ## Ticket Completion
@@ -72,7 +73,7 @@ When open PRs have required merge orders, the orchestrator runs one serial **mer
 
 The latest conductor comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A hosted-review fixer commit follows the existing transition from **Push PR and Run Codex PR Review** back through **Local Codex Review/Fix** in the Ticket Conductor Loop. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
+A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A hosted-review fixer commit follows the existing transition from **Ready PR and Run Codex PR Review** back through **Local Codex Review/Fix** in the Ticket Conductor Loop. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -91,8 +92,9 @@ Complete when `git status --short` is known and the branch contains only the tic
 
 Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations.
 Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
+After the worker returns, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 
-Complete when implementation commits, checks, acceptance evidence, assumptions, and blockers are returned.
+Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned.
 
 ### 3. Code Review
 
@@ -120,20 +122,19 @@ Then the conductor repeats with a fresh reviewer.
 
 Complete when no valid in-scope findings remain or a targeted scope blocker requires human action.
 
-### 6. Push PR and Run Codex PR Review
+### 6. Ready PR and Run Codex PR Review
 
 Spawn a PR worker to perform this sequence:
 
-1. Push the reviewed branch.
-2. Confirm the resulting remote full head SHA.
+1. Mark the PR ready for review if it is still a draft.
+2. Confirm the remote full head SHA.
 3. Capture the current UTC timestamp.
-4. Create or update the PR with non-closing ticket references such as `Refs #123`.
-5. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
+4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
 
 Carry both values across resumptions.
 
 If `codex-pr-review` pushes a fixer commit, return to **Local Codex Review/Fix**.
-Retain hosted validation only when that local review leaves its validated head unchanged; otherwise, repeat **Push PR and Run Codex PR Review**.
+Retain hosted validation only when that local review leaves its validated head unchanged; otherwise, repeat **Ready PR and Run Codex PR Review**.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -163,7 +164,7 @@ If the PR needs a small scope correction:
 1. Spawn a fix worker to apply it without dropping required behavior.
 2. Have the fix worker rerun relevant checks, commit, and push.
 3. Return to **Local Codex Review/Fix** for a fresh local review.
-4. Run hosted validation through **Push PR and Run Codex PR Review**.
+4. Run hosted validation through **Ready PR and Run Codex PR Review**.
 5. Do not repeat **Check Final Scope Fit**.
 
 When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading.
