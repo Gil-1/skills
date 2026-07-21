@@ -126,9 +126,9 @@ Complete when no valid in-scope findings remain or a targeted scope blocker requ
 
 Spawn a PR worker to perform this sequence:
 
-1. Mark the PR ready for review if it is still a draft.
-2. Confirm the remote full head SHA.
-3. Capture the current UTC timestamp.
+1. Confirm the remote full head SHA.
+2. Capture the current UTC timestamp.
+3. Mark the PR ready for review if it is still a draft.
 4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
 
 Carry both values across resumptions.
