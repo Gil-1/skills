@@ -107,11 +107,11 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### 4. Fix Code Review
 
-A **code-review cycle** is one two-axis report, one complete finding-disposition set, and one scoped fix batch. Before spawning fixes, the conductor classifies every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`, then sends only `fix` findings to the worker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. If findings classified as `fix` would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker before continuing. Use `diagnosing-bugs` for complex or important bugs.
+A **code-review cycle** is one two-axis report, one complete finding-disposition set, and one scoped fix batch. Before spawning fixes, the conductor classifies every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. If any finding is `blocked`, return a targeted blocker with evidence before spawning fixes or transitioning. Otherwise, send only `fix` findings to the worker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. If findings classified as `fix` would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker before continuing. Use `diagnosing-bugs` for complex or important bugs.
 
-Fix workers run focused checks. After the scoped fix batch and focused verification are complete, the conductor runs aggregate checks once and transitions to **Local Codex Review/Fix**; rerun aggregate checks only after later code changes. Start another full code-review cycle only when the fix batch materially changed design or scope. Repeated Standards/Spec confirmations do not substitute for the Local Codex phase.
+After all findings are dispositioned, if none is `fix`, transition directly to **Local Codex Review/Fix** without a fix commit or check rerun. For a scoped fix batch, fix workers run focused checks. After the batch and focused verification are complete, the conductor runs aggregate checks once and transitions to **Local Codex Review/Fix**; rerun aggregate checks only after later code changes. Start another full code-review cycle only when the fix batch materially changed design or scope. Repeated Standards/Spec confirmations do not substitute for the Local Codex phase.
 
-Complete when every finding is dispositioned, scoped fixes are committed, and focused and aggregate checks are complete, or a targeted blocker is returned with evidence.
+Complete when a targeted blocker is returned with evidence, or every finding is dispositioned and either no fix batch is required or scoped fixes are committed and focused and aggregate checks are complete.
 
 ### 5. Local Codex Review/Fix
 
