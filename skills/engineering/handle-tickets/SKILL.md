@@ -71,7 +71,7 @@ Complete when the merge decision is returned and every required **confirmed-merg
 
 When open PRs have required merge orders, the orchestrator runs one serial **merge lane** per ordered chain alongside parallel ticket delivery. Each lane has one active merge candidate. Independent lanes and unordered merge candidates may progress in parallel. Merge-ready PRs waiting behind an active candidate remain parked at their delivery checkpoint, while implementation and fixes on other tickets continue through their conductors.
 
-The latest conductor comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
+The latest workflow-owned PR comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
 A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
 
@@ -101,7 +101,7 @@ Complete when implementation commits are pushed, the PR URL is recorded, and che
 Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from.
 Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket.
 When it promises more than the ticket requires, recommend narrowing the documentation.
-Add the report to the ticket when the tracker supports comments.
+Post the report as a workflow-owned PR comment when the tracker supports PR comments.
 
 Complete when the report makes blockers, missing implementation, and fix recommendations clear.
 
@@ -172,7 +172,7 @@ Ask whether the diff is the smallest coherent implementation of the requested ou
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
 
-Have the conductor post a dedicated scope-fit comment whose first line is exactly `## Scope fit`.
+Have the conductor post a dedicated workflow-owned PR comment whose first line is exactly `## Scope fit`.
 On success, include only `PASS` after the heading.
 On failure, include `FAIL` followed by concise findings explaining why.
 Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
@@ -187,7 +187,7 @@ If the PR needs a small scope correction:
 
 When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading.
 
-After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate conductor comment after the latest branch update.
+After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
 
 If a targeted blocker prevented Codex validation, skip this check and return the blocker.
 
