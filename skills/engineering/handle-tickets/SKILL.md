@@ -122,8 +122,9 @@ Complete when every finding is dispositioned and either a blocker is returned, n
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
 Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
 If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
+After a successful local Codex outcome, post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. The checkpoint is current only when that SHA matches the local, remote, and PR head.
 
-Complete when no valid in-scope findings remain and aggregate checks pass, or any targeted blocker is returned with evidence.
+Complete when no valid in-scope findings remain, aggregate checks pass, and the current local Codex PASS checkpoint exists, or any targeted blocker is returned with evidence.
 
 ### 6. Ready PR and Run Codex PR Review
 
@@ -136,8 +137,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 
-If `codex-pr-review` pushes a fixer commit, return to **Local Codex Review/Fix**.
-Retain hosted validation only when that local review leaves its validated head unchanged; otherwise, repeat **Ready PR and Run Codex PR Review**.
+Once a current local Codex PASS checkpoint exists, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. A scope-reduction or scope-correction worker starts a new local-to-hosted cycle at **Local Codex Review/Fix**.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -148,7 +148,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when local and hosted validation cover the same current head or a targeted blocker requires human action.
+Complete when the hosted cycle started from a current local Codex PASS checkpoint and `codex-pr-review` validates the final current head, or a targeted blocker requires human action.
 
 ### 7. Check Final Scope Fit
 
