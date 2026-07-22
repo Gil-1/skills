@@ -142,14 +142,15 @@ A **hosted review checkpoint** is one of:
 - A current local Codex checkpoint.
 - For a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh.
 
-From a hosted review checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out.
+Use the checkpoint type and resulting head to choose the hosted-review transition:
 
-Classify each changed head by effect:
-
-- An ordinary in-scope hosted fix stays inside `codex-pr-review`.
-- A scope-changing commit, including a scope reduction or correction, returns to **Local Codex Review/Fix** before hosted validation resumes.
-
-After that return posts the new current local Codex checkpoint, tell `codex-pr-review` to resume as a checkpoint-refresh cycle and identify the newer checkpoint on the unchanged expected head. `codex-pr-review` captures the new review-cycle freshness boundary for that cycle.
+- `Local Codex checkpoint / normal entry`: run the normal ready-PR sequence above with its expected head and review-cycle freshness boundary.
+- `Local Codex checkpoint / ordinary in-scope hosted fix changes the head`: keep the fix and repeated hosted validation inside `codex-pr-review`.
+- `Local Codex checkpoint / scope-changing commit changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes; this includes a scope reduction or correction.
+- `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
+- `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
+- `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
+- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
 If aggregate checks fail after a hosted fixer push, run one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or repair outside approved scope returns a targeted blocker.
 
