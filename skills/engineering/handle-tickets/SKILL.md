@@ -17,9 +17,9 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
-- Phase workers complete their assigned lane directly. Only the `code-review` coordinator and `codex-pr-review` orchestrator may delegate as those skills require; their Standards, Spec, and fixer workers must not delegate further.
+- Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every conductor or worker that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; its parent aggregates this provenance without creating another manifest.
+- Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
 
@@ -32,7 +32,6 @@ By default, stop at `merge-ready`. Do not treat this workflow alone as authoriza
 ### 1. Gather Context
 
 Read each ticket body and relevant comments, the linked PRD or spec when present, repo instructions, base branch, and external-action limits.
-Record the orchestrator's loaded workflow skill provenance and require it in each conductor and worker handoff as defined in **Command Chain**.
 
 Complete when every ticket is marked `ready-for-agent` or the repo's equivalent, excluded, or blocked with a targeted question.
 
@@ -95,7 +94,7 @@ Complete when `git status --short` is known and the branch contains only the tic
 ### 2. Implement
 
 Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations.
-Explicitly tell it to implement directly without delegating, run checks, commit, and hand off without running `/code-review`.
+Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 
 Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned, or a targeted implementation blocker is returned with evidence.
@@ -103,7 +102,6 @@ Complete when implementation commits are pushed, the PR URL is recorded, and che
 ### 3. Code Review
 
 Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from.
-Tell the worker it may spawn only the Standards and Spec leaves required by `code-review`, and that both leaves must complete directly without delegating.
 Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket.
 When it promises more than the ticket requires, recommend narrowing the documentation.
 Post the report as a workflow-owned PR comment when the tracker supports PR comments.
@@ -118,15 +116,15 @@ For each `code-review` or local Codex report, classify every finding against the
 
 A **code-review cycle** is one two-axis report, one complete finding-disposition set, and at most one scoped fix batch. Apply **Review Finding Disposition** to the report.
 
-When no finding is `fix`, skip the worker and checks. Otherwise, the fix worker completes the scoped batch directly without delegating, runs focused checks, and commits, then the conductor runs aggregate checks once. Advance to **Local Codex Review/Fix**. Start another code-review cycle only when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+When no finding is `fix`, skip the worker and checks. Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. Advance to **Local Codex Review/Fix**. Start another code-review cycle only when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
 
 Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
-Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base. Tell it to complete the review directly without delegating.
-Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker that fixes directly without delegating, runs focused checks, and commits, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
-If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it directly without delegating, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
+Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
+Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
+If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
 Complete when no valid in-scope findings remain, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence.
@@ -139,8 +137,6 @@ Spawn a PR worker to perform this sequence:
 2. For a ready PR, use the freshness boundary captured immediately before the latest push; otherwise, capture the current UTC timestamp.
 3. Mark the PR ready for review if it is still a draft.
 4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
-
-The PR worker may delegate only to the fixer owned by `codex-pr-review`. That fixer completes any assigned repeated-pattern investigation directly without delegating.
 
 Carry both values across resumptions.
 
@@ -175,7 +171,6 @@ Complete when, from a hosted review checkpoint, `codex-pr-review` validates the 
 ### 7. Check Final Scope Fit
 
 After `codex-pr-review` validates the PR, spawn a fresh worker with the ticket, linked PRD or spec, fixed point, and full PR diff.
-Tell it to complete the scope-fit review directly without delegating.
 Ask whether the diff is the smallest coherent implementation of the requested outcome.
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
@@ -187,7 +182,7 @@ Do not include merge readiness, checks, review status, commit SHAs, mergeability
 
 If the PR needs a small scope correction:
 
-1. Spawn a fix worker to apply it directly without delegating or dropping required behavior.
+1. Spawn a fix worker to apply it without dropping required behavior.
 2. Have the fix worker rerun relevant checks, commit, and push.
 3. Return to **Local Codex Review/Fix** for a fresh local review.
 4. Run hosted validation through **Ready PR and Run Codex PR Review**.
