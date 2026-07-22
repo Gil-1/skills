@@ -116,11 +116,9 @@ Complete when every finding is dispositioned and either a blocker is returned, n
 ### 5. Local Codex Review/Fix
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
-From its report, spawn a fix worker for necessary in-scope findings.
-The fix worker runs relevant checks and commits.
-Then the conductor repeats with a fresh reviewer.
+Apply the Phase 4 finding-disposition and scope-blocker rules to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
 
-Complete when no valid in-scope findings remain or a targeted scope blocker requires human action.
+Complete when no valid in-scope findings remain and aggregate checks pass, or a targeted scope blocker requires human action.
 
 ### 6. Ready PR and Run Codex PR Review
 
