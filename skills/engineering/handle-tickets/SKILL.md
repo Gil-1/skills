@@ -107,7 +107,7 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex report, classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. If any finding is `blocked`, return a targeted blocker with evidence. If proposed fixes would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker. Send only `fix` findings to a worker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
+For each `code-review` or local Codex report, classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. If any finding is `blocked`, return a targeted blocker with evidence. If any `fix` findings would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker. Send only `fix` findings to a worker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
 
 ### 4. Fix Code Review
 
@@ -121,6 +121,7 @@ Complete when every finding is dispositioned and either a blocker is returned, n
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
 Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
+If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
 
 Complete when no valid in-scope findings remain and aggregate checks pass, or any targeted blocker is returned with evidence.
 
