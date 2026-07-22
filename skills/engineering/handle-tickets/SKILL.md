@@ -137,7 +137,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 
-A **hosted review checkpoint** is either a current local Codex checkpoint or, for a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh. From this checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. A scope-reduction or scope-correction worker starts a new local-to-hosted cycle at **Local Codex Review/Fix**.
+A **hosted review checkpoint** is either a current local Codex checkpoint or, for a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh. From this checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. Classify each changed head by effect: an ordinary in-scope hosted fix stays inside `codex-pr-review`; a commit that materially reduces, corrects, or otherwise changes approved scope exits hosted review and restarts at **Local Codex Review/Fix** before hosted validation resumes. If relevant aggregate checks fail on a hosted-fixer head, allow one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head; a repeated aggregate failure or repair outside approved scope returns a targeted blocker.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -148,7 +148,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head and relevant aggregate checks pass on that head after any hosted fixer push, or a targeted blocker requires human action.
+Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker requires human action.
 
 ### 7. Check Final Scope Fit
 
