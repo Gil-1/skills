@@ -137,7 +137,19 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 
-A **hosted review checkpoint** is either a current local Codex checkpoint or, for a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh. From this checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. Classify each changed head by effect: an ordinary in-scope hosted fix stays inside `codex-pr-review`; a commit that materially reduces, corrects, or otherwise changes approved scope exits hosted review and restarts at **Local Codex Review/Fix** before hosted validation resumes. If relevant aggregate checks fail on a hosted-fixer head, allow one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head; a repeated aggregate failure or repair outside approved scope returns a targeted blocker.
+A **hosted review checkpoint** is one of:
+
+- A current local Codex checkpoint.
+- For a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh.
+
+From a hosted review checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out.
+
+Classify each changed head by effect:
+
+- An ordinary in-scope hosted fix stays inside `codex-pr-review`.
+- A scope-changing commit, including a scope reduction or correction, returns to **Local Codex Review/Fix** before hosted validation resumes.
+
+If aggregate checks fail after a hosted fixer push, run one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or repair outside approved scope returns a targeted blocker.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
