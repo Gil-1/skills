@@ -107,11 +107,11 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### 4. Fix Code Review
 
-From the `code-review` report, spawn a fix worker for necessary in-scope findings.
-Do not broaden implementation solely to satisfy documentation added or strengthened by the diff.
-Use `diagnosing-bugs` for complex or important bugs.
+A **code-review cycle** is one two-axis report, one complete finding-disposition set, and at most one scoped fix batch. Classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. If any finding is `blocked`, return a targeted blocker with evidence. Otherwise, send only `fix` findings to the worker. If those fixes would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
 
-Complete when scoped fixes are committed and targeted checks rerun, or the worker returns a blocker or out-of-scope result with evidence.
+When no finding is `fix`, skip the worker and checks. Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. Advance to **Local Codex Review/Fix**. Start another code-review cycle only when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+
+Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
