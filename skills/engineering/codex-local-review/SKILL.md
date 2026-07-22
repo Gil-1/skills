@@ -5,7 +5,7 @@ description: Apply Codex's P0-P3 review rubric to local changes. Use for read-on
 
 # Codex Local Review
 
-Review the supplied change under the most specific task and repository guidance. Inspect surrounding code and tests to prove findings; leave the workspace unchanged.
+Review the supplied change directly under the most specific task and repository guidance. Do not delegate or spawn sub-agents. Inspect surrounding code and tests to prove findings; leave the workspace unchanged.
 
 ## Finding Rubric
 
