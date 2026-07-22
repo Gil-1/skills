@@ -149,7 +149,7 @@ Classify each changed head by effect:
 - An ordinary in-scope hosted fix stays inside `codex-pr-review`.
 - A scope-changing commit, including a scope reduction or correction, returns to **Local Codex Review/Fix** before hosted validation resumes.
 
-After that return posts the new current local Codex checkpoint, capture a new review-cycle freshness boundary before hosted validation resumes. Preserve the same expected head when it is unchanged.
+After that return posts the new current local Codex checkpoint, tell `codex-pr-review` to resume as a checkpoint-refresh cycle and identify the newer checkpoint on the unchanged expected head. `codex-pr-review` captures the new review-cycle freshness boundary for that cycle.
 
 If aggregate checks fail after a hosted fixer push, run one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or repair outside approved scope returns a targeted blocker.
 
