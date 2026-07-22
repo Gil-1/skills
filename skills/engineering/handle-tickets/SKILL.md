@@ -17,6 +17,9 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
+- Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
+- Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
+- Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
 
@@ -195,7 +198,7 @@ Complete when the worker reports that the final diff fits the ticket, its prescr
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, merge-ready yes/no, next action, and owner.
+The conductor handoff must include status, ticket URL, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, loaded workflow skill provenance from the existing lock or resolved base paths, merge-ready yes/no, next action, and owner.
 
 ## PR Cleanup
 
