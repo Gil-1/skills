@@ -73,7 +73,7 @@ When open PRs have required merge orders, the orchestrator runs one serial **mer
 
 The latest conductor comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A hosted-review fixer commit follows the existing transition from **Ready PR and Run Codex PR Review** back through **Local Codex Review/Fix** in the Ticket Conductor Loop. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
+A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A purely mechanical refresh enters hosted review from its current `Delivery checkpoint` without a new local Codex checkpoint. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -137,7 +137,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 
-Once a current local Codex PASS checkpoint exists, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. A scope-reduction or scope-correction worker starts a new local-to-hosted cycle at **Local Codex Review/Fix**.
+Normal delivery enters hosted review only from a current local Codex PASS checkpoint. A purely mechanical Merge Lane integration refresh may instead enter from its current `Delivery checkpoint`. From either checkpoint, `codex-pr-review` owns hosted feedback fixes and repeated hosted validation until it approves, blocks with evidence, or times out. After any hosted fixer push, require the relevant aggregate checks to pass on the final current head without returning to **Local Codex Review/Fix**. A scope-reduction or scope-correction worker starts a new local-to-hosted cycle at **Local Codex Review/Fix**.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -148,7 +148,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when the hosted cycle started from a current local Codex PASS checkpoint and `codex-pr-review` validates the final current head, or a targeted blocker requires human action.
+Complete when `codex-pr-review` validates the final current head after the hosted cycle started from either a current local Codex PASS checkpoint or, for a purely mechanical Merge Lane integration refresh, its current `Delivery checkpoint`, with relevant aggregate checks passing on that final head after any hosted fixer push; or when a targeted blocker requires human action.
 
 ### 7. Check Final Scope Fit
 
