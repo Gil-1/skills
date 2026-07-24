@@ -67,7 +67,7 @@ Before reporting successful validation for the expected head, run one bounded cl
 - When either trigger fires, stop the comment-by-comment loop and create a root-cause packet: relevant Codex comments across heads, accepted/rejected dispositions, current code paths, linked ticket/PRD intent, tests already added, and the suspected invariant that keeps failing.
 - Investigate whether the comments are symptoms of one wrong direction. Prefer a coherent same-PR fix when the root cause remains inside the current ticket/PRD contract and owner boundary and the active policy authorizes it; otherwise return its targeted decision.
 - During root-cause investigation, read the surrounding implementation and tests deeply enough to prove the intended behavior. Add or update focused tests for the invariant before requesting another Codex review when practical.
-- If the coherent fix is outside the PR contract, crosses owner boundaries, requires a product decision, or needs a new public/protocol/storage contract, stop as `blocked` with the smallest targeted question and evidence. Do not rename that outcome as redesign or split.
+- If the coherent fix is outside the PR contract, crosses owner boundaries, requires a product decision, or needs a new public/protocol/storage contract, apply the active policy: keep it as a reasoned `follow-up` when it does not affect current PR safety, otherwise stop as `blocked` with the smallest targeted question and evidence. Do not rename a blocked outcome as redesign or split.
 
 ## Watcher And Status
 
