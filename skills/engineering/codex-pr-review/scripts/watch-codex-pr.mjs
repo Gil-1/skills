@@ -1416,9 +1416,8 @@ function fingerprint(summary) {
 }
 
 function immediateEvent(snapshot, expectedHead) {
-  if (expectedHead && !commitMatchesHead(snapshot.headRefOid, expectedHead)) return "pr_head_changed";
-  if (snapshot.state !== "OPEN") return "pr_state_changed";
-  if (["CONFLICTING", "DIRTY"].includes(snapshot.mergeStateStatus)) return "merge_state_changed";
+  const stateEvent = stateChangeEvent(null, snapshot, expectedHead);
+  if (stateEvent) return stateEvent;
   if (snapshot.status === "approved") return "codex_approved";
   if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   if (dispositionedReviewIsComplete(snapshot)) return "codex_review_complete";
@@ -1437,16 +1436,17 @@ function dispositionedReviewCandidate(snapshot) {
     && snapshot.currentHeadActiveCodexThreadCount === 0;
 }
 
-async function verifyDispositionedReviewEvidence(target, snapshot, options) {
-  if (
-    options.fullHistory
-    || !snapshot.completionSnapshotTruncated
-    || snapshot.status !== "none"
-    || snapshot.currentHeadFeedbackCount === 0
-    || snapshot.currentHeadActiveCodexThreadCount > 0
-  ) {
-    return snapshot;
-  }
+function completionVerificationRequired(snapshot, options, precedingEvent) {
+  return !precedingEvent
+    && !options.fullHistory
+    && snapshot.completionSnapshotTruncated
+    && snapshot.status === "none"
+    && snapshot.currentHeadFeedbackCount > 0
+    && snapshot.currentHeadActiveCodexThreadCount === 0;
+}
+
+async function verifyDispositionedReviewEvidence(target, snapshot, options, precedingEvent) {
+  if (!completionVerificationRequired(snapshot, options, precedingEvent)) return snapshot;
   return readSnapshotRateAware(target, { ...options, fullHistory: true });
 }
 
@@ -1458,15 +1458,20 @@ function changeEvent(previous, current) {
   return undefined;
 }
 
-function stateChangeEvent(previous, current) {
-  if (previous.headRefOid !== current.headRefOid) return "pr_head_changed";
-  if (previous.state !== current.state) return "pr_state_changed";
-  if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
+function stateChangeEvent(previous, current, expectedHead) {
+  if (expectedHead && !commitMatchesHead(current.headRefOid, expectedHead)) return "pr_head_changed";
+  if (previous?.headRefOid !== undefined && previous.headRefOid !== current.headRefOid) return "pr_head_changed";
+  if (previous?.state !== undefined && previous.state !== current.state) return "pr_state_changed";
+  if (current.state !== "OPEN") return "pr_state_changed";
+  if (previous?.mergeStateStatus !== undefined && previous.mergeStateStatus !== current.mergeStateStatus) {
+    return "merge_state_changed";
+  }
+  if (["CONFLICTING", "DIRTY"].includes(current.mergeStateStatus)) return "merge_state_changed";
   return undefined;
 }
 
 function selectEvent(previous, current, expectedHead) {
-  return (previous ? stateChangeEvent(previous, current) : undefined)
+  return stateChangeEvent(previous, current, expectedHead)
     ?? immediateEvent(current, expectedHead)
     ?? (previous ? changeEvent(previous, current) : undefined);
 }
@@ -1507,7 +1512,10 @@ async function watch(options) {
     target = await resolveTarget(rateAwareOptions);
     if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
-    if (!options.once) initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions);
+    if (!options.once) {
+      const precedingEvent = stateChangeEvent(null, initial, options.expectedHead);
+      initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions, precedingEvent);
+    }
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     printResult({
@@ -1566,7 +1574,8 @@ async function watch(options) {
 
     try {
       current = await readSnapshotRateAware(target, rateAwareOptions);
-      current = await verifyDispositionedReviewEvidence(target, current, rateAwareOptions);
+      const precedingEvent = stateChangeEvent(initial, current, options.expectedHead);
+      current = await verifyDispositionedReviewEvidence(target, current, rateAwareOptions, precedingEvent);
     } catch (error) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
@@ -1593,7 +1602,8 @@ async function watch(options) {
   };
   try {
     final = await readSnapshotRateAware(target, finalSnapshotOptions);
-    final = await verifyDispositionedReviewEvidence(target, final, finalSnapshotOptions);
+    const precedingEvent = stateChangeEvent(current, final, options.expectedHead);
+    final = await verifyDispositionedReviewEvidence(target, final, finalSnapshotOptions, precedingEvent);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     finalSnapshotError = error.message;
@@ -1623,7 +1633,7 @@ async function watch(options) {
   });
 }
 
-export { changeEvent, immediateEvent, selectEvent };
+export { changeEvent, completionVerificationRequired, immediateEvent, selectEvent };
 
 const isMain = process.argv[1]
   && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));

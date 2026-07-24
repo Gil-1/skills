@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 
 import {
   changeEvent,
+  completionVerificationRequired,
   immediateEvent,
   selectEvent,
 } from "../skills/engineering/codex-pr-review/scripts/watch-codex-pr.mjs";
@@ -87,4 +88,17 @@ test("symlinked CLI entrypoint still executes", (context) => {
 
   const output = execFileSync(process.execPath, [symlinkPath, "--help"], { encoding: "utf8" });
   assert.match(output, /^Usage: watch-codex-pr\.mjs/m);
+});
+
+test("terminal state skips truncated completion expansion", () => {
+  const truncated = snapshot({
+    state: "CLOSED",
+    currentHeadFeedbackCount: 1,
+    dispositionedCurrentHeadFeedbackCount: 1,
+    completionSnapshotTruncated: true,
+  });
+  const precedingEvent = selectEvent(null, truncated);
+
+  assert.equal(precedingEvent, "pr_state_changed");
+  assert.equal(completionVerificationRequired(truncated, { fullHistory: false }, precedingEvent), false);
 });
