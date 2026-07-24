@@ -1464,9 +1464,15 @@ function stateChangeEvent(previous, current, expectedHead) {
   if (!currentMatchesExpected && previous?.headRefOid !== undefined && previous.headRefOid !== current.headRefOid) {
     return "pr_head_changed";
   }
-  if (previous?.state !== undefined && previous.state !== current.state) return "pr_state_changed";
+  const comparablePrevious = previous?.headRefOid === current.headRefOid ? previous : null;
+  if (comparablePrevious?.state !== undefined && comparablePrevious.state !== current.state) {
+    return "pr_state_changed";
+  }
   if (current.state !== "OPEN") return "pr_state_changed";
-  if (previous?.mergeStateStatus !== undefined && previous.mergeStateStatus !== current.mergeStateStatus) {
+  if (
+    comparablePrevious?.mergeStateStatus !== undefined
+    && comparablePrevious.mergeStateStatus !== current.mergeStateStatus
+  ) {
     return "merge_state_changed";
   }
   if (["CONFLICTING", "DIRTY"].includes(current.mergeStateStatus)) return "merge_state_changed";

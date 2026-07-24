@@ -87,7 +87,11 @@ test("cheap initial state changes precede first full-snapshot approval", () => {
 });
 
 test("authoritative expected head ignores a stale cheap head", () => {
-  const staleCheap = snapshot({ headRefOid: "old123" });
+  const staleCheap = snapshot({
+    headRefOid: "old123",
+    state: "CLOSED",
+    mergeStateStatus: "DIRTY",
+  });
   const firstFull = snapshot({ headRefOid: "abc123", status: "approved" });
   assert.equal(selectEvent(staleCheap, firstFull, "abc123"), "codex_approved");
 });
