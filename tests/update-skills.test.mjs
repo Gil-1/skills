@@ -9,6 +9,7 @@ import {
   linkOpenCodeSkills,
   reconcilePublishedSkillLinks,
   resolveSkillPaths,
+  topLevelSkillNames,
 } from "../scripts/update-skills.mjs";
 
 test("update installs skills for OpenCode", () => {
@@ -22,6 +23,22 @@ test("update installs skills for OpenCode", () => {
     "--agent",
     "opencode",
   ]);
+});
+
+test("update discovers only public top-level Lavish skills", () => {
+  const names = topLevelSkillNames(
+    {
+      truncated: false,
+      tree: [
+        { type: "blob", path: "skills/lavish/SKILL.md" },
+        { type: "blob", path: ".agents/skills/lavish-design/SKILL.md" },
+        { type: "blob", path: "skills/lavish/README.md" },
+      ],
+    },
+    "kunchenguid/lavish-axi",
+  );
+
+  assert.deepEqual(names, ["lavish"]);
 });
 
 test("update resolves the OpenCode skills directory from XDG_CONFIG_HOME", () => {
