@@ -140,7 +140,7 @@ Complete when every finding is dispositioned and either a blocker is returned, n
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
 Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no valid in-scope findings remain, the conductor runs aggregate checks once.
-If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
+If aggregate checks fail, diagnose and classify the required repair under **Review Finding Disposition**. For `fix`, spawn one worker to repair it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. A repeated failure or any other disposition returns its evidence-backed outcome.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
 Complete when no valid in-scope findings remain, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence.
@@ -196,7 +196,7 @@ On success, include only `PASS` after the heading.
 On failure, include `FAIL` followed by concise findings explaining why.
 Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
 
-If the PR needs a small scope correction:
+Apply **Review Finding Disposition** to every scope-fit finding. For the independent `fix` scope-correction batch:
 
 1. Spawn a fix worker to apply it without dropping required behavior.
 2. Have the fix worker rerun relevant checks, commit, and push.
@@ -204,7 +204,9 @@ If the PR needs a small scope correction:
 4. Run hosted validation through **Ready PR and Run Codex PR Review**.
 5. Do not repeat **Check Final Scope Fit**.
 
-When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading.
+After that validation, recheck every deferred finding against the resulting head and give it an explicit disposition. When the prescribed correction passes and no blocker remains, update the existing scope-fit comment so only `PASS` remains after the heading.
+
+Any other disposition returns its evidence-backed outcome without further editing.
 
 After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
 

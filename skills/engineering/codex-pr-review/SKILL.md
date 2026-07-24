@@ -18,7 +18,7 @@ Orchestrator:
 
 Fixer sub-agent:
 
-- Complete the supplied work directly without delegating. Refresh PR state, read the full body for every supplied item/thread, apply Review Discipline and Severity Handling, fix only findings authorized by the caller-supplied policy when present and otherwise valid in-scope blockers, run checks, commit, and push.
+- Complete the supplied work directly without delegating. Refresh PR state, read the full body for every supplied item/thread, apply Review Discipline and Severity Handling, fix only findings authorized by the active policy, run checks, commit, and push.
 - When assigned a repeated-pattern packet, investigate the shared root cause before patching another individual symptom.
 - Return PR URL, start/end SHAs, verdicts, reactions, no-fix rationales, root-cause notes when relevant, files, checks, commits, push result, the UTC timestamp captured immediately after confirming any pushed remote head, and blockers.
 
