@@ -126,13 +126,21 @@ For every review finding, evaluate validity and scope before deciding edit autho
 
 Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
 
+#### Check Failure Disposition
+
+For any workflow-owned aggregate-check failure, diagnose the cause and classify any required repair under **Review Finding Disposition**.
+
+- For `fix`, run at most one repair batch with focused checks and a commit, then repeat the owning review on the changed head and run aggregate checks once more.
+- For `not-actionable` or `out-of-scope`, continue only when evidence proves the failure does not gate this ticket and every required check passes; otherwise return a targeted check blocker with the responsible owner.
+- For `blocked`, return its targeted decision. A repeated failure or a repair that cannot be classified as `fix` also returns a targeted check blocker with evidence and owner.
+
 ### 4. Fix Code Review
 
 A **code-review cycle** is one two-axis report, one complete finding-disposition set, and at most one scoped fix batch. Apply **Review Finding Disposition** to the report.
 
 When no finding is `fix`, skip the worker and checks; return any blocker, otherwise advance to **Local Codex Review/Fix**.
 
-Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require an explicit current-head disposition before returning it or clearing it. When no blocker remains, advance to **Local Codex Review/Fix**. Start another code-review cycle only for that evidence renewal or when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once and applies **Check Failure Disposition** if needed. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require an explicit current-head disposition before returning it or clearing it. When no blocker remains, advance to **Local Codex Review/Fix**. Start another code-review cycle only for that evidence renewal, check repair, or when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
 
 Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
@@ -140,7 +148,7 @@ Complete when every finding is dispositioned and either a blocker is returned, n
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
 Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no valid in-scope findings remain, the conductor runs aggregate checks once.
-If aggregate checks fail, diagnose and classify the required repair under **Review Finding Disposition**. For `fix`, spawn one worker to repair it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. A repeated failure or any other disposition returns its evidence-backed outcome.
+If aggregate checks fail, apply **Check Failure Disposition**.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
 Complete when no valid in-scope findings remain, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence.
@@ -171,7 +179,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
 - `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
-If aggregate checks fail after a hosted fixer push, diagnose and classify the required repair under **Review Finding Disposition**. For `fix`, run one repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or any other disposition returns its evidence-backed outcome.
+If aggregate checks fail after a hosted fixer push, apply **Check Failure Disposition**.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -204,9 +212,7 @@ Apply **Review Finding Disposition** to every scope-fit finding. For the indepen
 4. Run hosted validation through **Ready PR and Run Codex PR Review**.
 5. Do not repeat **Check Final Scope Fit**.
 
-After that validation, recheck every deferred finding against the resulting head and give it an explicit disposition. When the prescribed correction passes and no blocker remains, update the existing scope-fit comment so only `PASS` remains after the heading.
-
-Any other disposition returns its evidence-backed outcome without further editing.
+After that validation, recheck every deferred finding against the resulting head and give it an explicit disposition. Return any blocker with its evidence-backed outcome. When no `fix` or blocker remains, including when every finding is `not-actionable` or a harmless `out-of-scope` observation, update the existing scope-fit comment so only `PASS` remains after the heading and continue without further editing.
 
 After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
 
