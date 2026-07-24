@@ -116,20 +116,29 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex report, classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. If any finding is `blocked`, return a targeted blocker with evidence. If any `fix` findings would reverse an approved scope reduction or materially enlarge the review unit, return a targeted scope blocker. Send only `fix` findings to a worker. Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
+For each `code-review` or local Codex finding, evaluate validity and scope before deciding edit authority, then classify it against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Severity controls ordering and urgency, not edit authority.
+
+- Use `fix` without asking only for a verified finding clearly inside the approved ticket and owner boundary when the correction is small, local, reversible, has a known intended result, and has a focused verification path. Send only `fix` findings to a worker.
+- Use read-only investigation to resolve uncertainty. Classify the finding as `blocked` and return the smallest targeted decision question before editing when the correction changes product behavior, a contract, scope, or ownership; is large or cross-cutting; materially enlarges the review unit; or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
+- Use `not-actionable` with evidence for findings that are disproven, stale, intentional, duplicate, or speculative. Use `out-of-scope` with a no-fix rationale for a concrete adjacent issue that does not affect the current PR's safety; return a targeted decision instead when current delivery requires scope expansion or follow-up action.
+- Apply independent `fix` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, why they are unsafe to auto-fix, the smallest concrete options, a recommendation, and whether delivery can continue independently.
+
+Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
 
 ### 4. Fix Code Review
 
 A **code-review cycle** is one two-axis report, one complete finding-disposition set, and at most one scoped fix batch. Apply **Review Finding Disposition** to the report.
 
-When no finding is `fix`, skip the worker and checks. Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. Advance to **Local Codex Review/Fix**. Start another code-review cycle only when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+When no finding is `fix`, skip the worker and checks; return any blocker, otherwise advance to **Local Codex Review/Fix**.
 
-Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
+Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require an explicit current-head disposition before returning it or clearing it. When no blocker remains, advance to **Local Codex Review/Fix**. Start another code-review cycle only for that evidence renewal or when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+
+Complete when every finding has a current-head disposition and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
-Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
+Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no valid in-scope findings remain, the conductor runs aggregate checks once.
 If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
