@@ -19,7 +19,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every `codex-pr-review` call carries **Review Finding Disposition** as the caller-supplied edit-authority policy and the hosted-review transitions below as its caller-supplied transition policy.
+- Every `codex-pr-review` call carries **Review Finding Disposition**, **Check Failure Disposition**, the active hosted review checkpoint type, and the hosted-review transitions below as caller-supplied policies.
 - Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
