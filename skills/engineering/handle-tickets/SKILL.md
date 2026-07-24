@@ -12,7 +12,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 ## Command Chain
 
 - The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user and resumes the same task chain with the answer.
-- The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree and branch.
+- The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree, branch, and current implementation packet path when present.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
@@ -93,7 +93,13 @@ Complete when `git status --short` is known and the branch contains only the tic
 
 ### 2. Implement
 
-Spawn a worker with `implement`, the ticket, linked PRD context when present, assigned worktree and branch, and verification expectations.
+Before spawning implementation, decide whether the ticket and linked spec already provide enough implementation context. If a concrete unanswered design, ownership, compatibility, or verification question would materially risk the implementation, spawn one direct analysis worker that leaves the repository and worktree unchanged, writes a uniquely ticket-owned **implementation handoff packet** in the OS temporary directory, and returns its path. Record that path with the orchestrator immediately. Skip this analysis when existing artifacts already answer the question.
+
+The packet has no length limit. Preserve every implementation-relevant fact not already captured in referenced authoritative artifacts, including corrections or decisions about root cause, selected design, mistake-preventing rejected directions, invariants, scope, ownership, compatibility, verification, unresolved questions, and operational state. Exclude raw investigation logs and repeated source content; reference existing issues, specs, ADRs, commits, diffs, files, and URLs instead. Redact sensitive information.
+
+Pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Verify the packet exists before reuse, regenerate it when missing, delete the prior file when replacing it after a material decision change, and remove it during PR Cleanup or when delivery is abandoned.
+
+Spawn a worker with `implement`, the ticket, linked PRD context when present, implementation packet path when present, assigned worktree and branch, and verification expectations.
 Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 
@@ -198,7 +204,7 @@ Complete when the worker reports that the final diff fits the ticket, its prescr
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, loaded workflow skill provenance from the existing lock or resolved base paths, merge-ready yes/no, next action, and owner.
+The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, loaded workflow skill provenance from the existing lock or resolved base paths, merge-ready yes/no, next action, and owner.
 
 ## PR Cleanup
 
