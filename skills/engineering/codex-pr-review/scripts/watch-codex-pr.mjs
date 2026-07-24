@@ -1459,8 +1459,11 @@ function changeEvent(previous, current) {
 }
 
 function stateChangeEvent(previous, current, expectedHead) {
-  if (expectedHead && !commitMatchesHead(current.headRefOid, expectedHead)) return "pr_head_changed";
-  if (previous?.headRefOid !== undefined && previous.headRefOid !== current.headRefOid) return "pr_head_changed";
+  const currentMatchesExpected = expectedHead && commitMatchesHead(current.headRefOid, expectedHead);
+  if (expectedHead && !currentMatchesExpected) return "pr_head_changed";
+  if (!currentMatchesExpected && previous?.headRefOid !== undefined && previous.headRefOid !== current.headRefOid) {
+    return "pr_head_changed";
+  }
   if (previous?.state !== undefined && previous.state !== current.state) return "pr_state_changed";
   if (current.state !== "OPEN") return "pr_state_changed";
   if (previous?.mergeStateStatus !== undefined && previous.mergeStateStatus !== current.mergeStateStatus) {

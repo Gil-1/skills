@@ -86,6 +86,12 @@ test("cheap initial state changes precede first full-snapshot approval", () => {
   assert.equal(selectEvent(cheapInitial, firstFull), "merge_state_changed");
 });
 
+test("authoritative expected head ignores a stale cheap head", () => {
+  const staleCheap = snapshot({ headRefOid: "old123" });
+  const firstFull = snapshot({ headRefOid: "abc123", status: "approved" });
+  assert.equal(selectEvent(staleCheap, firstFull, "abc123"), "codex_approved");
+});
+
 test("symlinked CLI entrypoint still executes", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "watch-codex-pr-"));
   const symlinkPath = join(directory, "watch-codex-pr.mjs");
