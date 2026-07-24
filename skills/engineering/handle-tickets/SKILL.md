@@ -19,7 +19,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every `codex-pr-review` call carries **Review Finding Disposition** as the caller-supplied edit-authority policy.
+- Every `codex-pr-review` call carries **Review Finding Disposition** as the caller-supplied edit-authority policy and the hosted-review transitions below as its caller-supplied transition policy.
 - Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
@@ -204,7 +204,7 @@ On success, include only `PASS` after the heading.
 On failure, include `FAIL` followed by concise findings explaining why.
 Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
 
-Apply **Review Finding Disposition** to every scope-fit finding. When no finding is `fix`, return any blocker; otherwise update the scope-fit comment so only `PASS` remains and continue.
+Apply **Review Finding Disposition** to every scope-fit finding. When no finding is `fix`, return any blocker; when no blocker remains, update the scope-fit comment so only `PASS` remains and continue.
 
 For the independent `fix` scope-correction batch:
 
