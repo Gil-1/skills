@@ -32,7 +32,7 @@ Fixer sub-agent:
   - `follow-up`: adjacent bug class, sibling surface, cleanup, or broader hardening track.
   - `blocked`: requires a new protocol/config/storage/public API contract, different owner boundary, release-process change, or product decision.
 - These classifications establish validity and scope, not edit authority. Apply the caller-supplied edit-authority policy when present; it may require a decision before an `in-scope blocker` is edited. Priority controls ordering and urgency and never expands that authority.
-- A fixer may apply independently authorized findings before returning a decision when the unresolved findings cannot change those fixes' correctness. Recheck the remainder against the resulting head, then return one consolidated targeted question under the caller's policy.
+- When the caller's policy applies independently authorized findings before a decision, recheck every deferred finding against the resulting head and give each an explicit disposition before returning one consolidated targeted question.
 - Reject unrealistic edge cases, speculative risks, broad rewrites, and over-complex fixes. Prefer small fixes at the right ownership boundary; refactor only when it clearly improves the bug class.
 - When an accepted finding shows a bug class or repeated pattern, inspect the current PR scope for sibling instances and fix the scoped bug class at once when practical. Stop at touched surfaces, owner boundaries, and clear follow-up territory.
 - Report security findings only when the change creates a concrete, actionable risk or removes an important safety check.
