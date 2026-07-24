@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1416,8 +1414,7 @@ function fingerprint(summary) {
 }
 
 function immediateEvent(snapshot, expectedHead) {
-  const stateEvent = stateChangeEvent(null, snapshot, expectedHead);
-  if (stateEvent) return stateEvent;
+  if (expectedHead && !commitMatchesHead(snapshot.headRefOid, expectedHead)) return "pr_head_changed";
   if (snapshot.status === "approved") return "codex_approved";
   if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   if (dispositionedReviewIsComplete(snapshot)) return "codex_review_complete";
@@ -1436,53 +1433,26 @@ function dispositionedReviewCandidate(snapshot) {
     && snapshot.currentHeadActiveCodexThreadCount === 0;
 }
 
-function completionVerificationRequired(snapshot, options, precedingEvent) {
-  return !precedingEvent
-    && !options.fullHistory
-    && snapshot.completionSnapshotTruncated
-    && snapshot.status === "none"
-    && snapshot.currentHeadFeedbackCount > 0
-    && snapshot.currentHeadActiveCodexThreadCount === 0;
-}
-
-async function verifyDispositionedReviewEvidence(target, snapshot, options, precedingEvent) {
-  if (!completionVerificationRequired(snapshot, options, precedingEvent)) return snapshot;
+async function verifyDispositionedReviewEvidence(target, snapshot, options) {
+  if (
+    options.fullHistory
+    || !snapshot.completionSnapshotTruncated
+    || snapshot.status !== "none"
+    || snapshot.currentHeadFeedbackCount === 0
+    || snapshot.currentHeadActiveCodexThreadCount > 0
+  ) {
+    return snapshot;
+  }
   return readSnapshotRateAware(target, { ...options, fullHistory: true });
 }
 
 function changeEvent(previous, current) {
-  const stateEvent = stateChangeEvent(previous, current);
-  if (stateEvent) return stateEvent;
+  if (previous.headRefOid !== current.headRefOid) return "pr_head_changed";
   if (previous.status !== current.status) return "codex_status_changed";
+  if (previous.state !== current.state) return "pr_state_changed";
+  if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
   if (previous.fingerprint !== current.fingerprint) return "codex_feedback_changed";
   return undefined;
-}
-
-function stateChangeEvent(previous, current, expectedHead) {
-  const currentMatchesExpected = expectedHead && commitMatchesHead(current.headRefOid, expectedHead);
-  if (expectedHead && !currentMatchesExpected) return "pr_head_changed";
-  if (!currentMatchesExpected && previous?.headRefOid !== undefined && previous.headRefOid !== current.headRefOid) {
-    return "pr_head_changed";
-  }
-  const comparablePrevious = previous?.headRefOid === current.headRefOid ? previous : null;
-  if (comparablePrevious?.state !== undefined && comparablePrevious.state !== current.state) {
-    return "pr_state_changed";
-  }
-  if (current.state !== "OPEN") return "pr_state_changed";
-  if (
-    comparablePrevious?.mergeStateStatus !== undefined
-    && comparablePrevious.mergeStateStatus !== current.mergeStateStatus
-  ) {
-    return "merge_state_changed";
-  }
-  if (["CONFLICTING", "DIRTY"].includes(current.mergeStateStatus)) return "merge_state_changed";
-  return undefined;
-}
-
-function selectEvent(previous, current, expectedHead) {
-  return stateChangeEvent(previous, current, expectedHead)
-    ?? immediateEvent(current, expectedHead)
-    ?? (previous ? changeEvent(previous, current) : undefined);
 }
 
 function slim(snapshot) {
@@ -1516,17 +1486,12 @@ async function watch(options) {
   let target;
   let lastCheapStatus;
   let initial;
-  let initialStateEvent;
 
   try {
     target = await resolveTarget(rateAwareOptions);
     if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
-    if (!options.once) {
-      initialStateEvent = stateChangeEvent(lastCheapStatus, initial, options.expectedHead);
-      initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions, initialStateEvent);
-      initialStateEvent = stateChangeEvent(lastCheapStatus, initial, options.expectedHead);
-    }
+    if (!options.once) initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     printResult({
@@ -1546,7 +1511,7 @@ async function watch(options) {
     return;
   }
 
-  const initialEvent = initialStateEvent ?? selectEvent(null, initial, options.expectedHead);
+  const initialEvent = immediateEvent(initial, options.expectedHead);
   if (initialEvent) {
     printResult({
       event: initialEvent,
@@ -1585,13 +1550,12 @@ async function watch(options) {
 
     try {
       current = await readSnapshotRateAware(target, rateAwareOptions);
-      const precedingEvent = stateChangeEvent(initial, current, options.expectedHead);
-      current = await verifyDispositionedReviewEvidence(target, current, rateAwareOptions, precedingEvent);
+      current = await verifyDispositionedReviewEvidence(target, current, rateAwareOptions);
     } catch (error) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
     }
-    const event = selectEvent(initial, current, options.expectedHead);
+    const event = immediateEvent(current, options.expectedHead) ?? changeEvent(initial, current);
     if (event) {
       printResult({
         event,
@@ -1613,14 +1577,13 @@ async function watch(options) {
   };
   try {
     final = await readSnapshotRateAware(target, finalSnapshotOptions);
-    const precedingEvent = stateChangeEvent(current, final, options.expectedHead);
-    final = await verifyDispositionedReviewEvidence(target, final, finalSnapshotOptions, precedingEvent);
+    final = await verifyDispositionedReviewEvidence(target, final, finalSnapshotOptions);
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
     finalSnapshotError = error.message;
   }
 
-  const finalEvent = selectEvent(current, final, options.expectedHead);
+  const finalEvent = immediateEvent(final, options.expectedHead) ?? changeEvent(current, final);
   if (finalEvent) {
     printResult({
       event: finalEvent,
@@ -1644,14 +1607,7 @@ async function watch(options) {
   });
 }
 
-export { changeEvent, completionVerificationRequired, immediateEvent, selectEvent };
-
-const isMain = process.argv[1]
-  && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-
-if (isMain) {
-  watch(parseArgs(process.argv.slice(2))).catch((error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
-}
+watch(parseArgs(process.argv.slice(2))).catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
