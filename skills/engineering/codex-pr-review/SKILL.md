@@ -12,7 +12,7 @@ Orchestrator:
 - Own watcher runs, PR-body status interpretation, fixer delegation, worktree discipline, and final reporting.
 - Keep PR review/fix work in a dedicated git worktree. Reuse a caller-supplied worktree, such as from `handle-tickets`, after verifying PR branch and current head; otherwise create or verify one before edits/checks.
 - Track rounds by head SHA, files, themes, subsystems, accepted/rejected findings, fixes pushed, and checks to detect repeated patterns.
-- Send the fixer packet: PR URL/number, branches, worktree, current `headRefOid`, the current review-cycle freshness boundary when known, watcher-fresh `feedbackItems` and `activeCodexThreads`, parsed priorities, watcher snapshot counts, P0/P1 safety-pass results when needed, Review Discipline scope baseline, related prior Codex comments for repeated patterns, prior `code-review` or `review-fix` outcomes, checks, and push policy. Include enough spec context to classify findings; do not ask for a fresh full `code-review` unless a finding specifically requires it.
+- Send the fixer packet: PR URL/number, branches, worktree, current `headRefOid`, the current review-cycle freshness boundary when known, watcher-fresh `feedbackItems` and `activeCodexThreads`, parsed priorities, watcher snapshot counts, P0/P1 safety-pass results when needed, Review Discipline scope baseline, the caller-supplied edit-authority policy when present, related prior Codex comments for repeated patterns, prior `code-review` or `review-fix` outcomes, checks, and push policy. Include enough spec context to classify findings; do not ask for a fresh full `code-review` unless a finding specifically requires it.
 - Verify the fixer handoff with `gh pr view`, remote head SHA, local status when sharing a worktree, and verdict/reaction outcomes. Do not analyze, fix, commit, or push delegated comment changes.
 - If no fixer sub-agent can be spawned, handle active comments in the parent using Review Discipline and Severity Handling, run checks, and report the fallback.
 
@@ -31,14 +31,12 @@ Fixer sub-agent:
   - `in-scope blocker`: introduced by the current diff, affects the same owner boundary, and can be fixed without changing the task contract.
   - `follow-up`: adjacent bug class, sibling surface, cleanup, or broader hardening track.
   - `blocked`: requires a new protocol/config/storage/public API contract, different owner boundary, release-process change, or product decision.
-- Finding validity, priority, scope, and edit authority are separate. Priority controls ordering and urgency, not permission to change the code.
-- Fix without asking only when a finding is verified, clearly inside the task contract and owner boundary, and the correction is small, local, reversible, has a known intended result, and has a focused verification path.
-- Use read-only investigation to resolve uncertainty. Before editing, return `blocked` with the smallest targeted question when the correction changes product behavior or a contract, expands scope or ownership, is large or cross-cutting, or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
-- Keep a concrete adjacent issue that does not affect the current PR's safety as a `follow-up` with a no-fix rationale. Apply independent bounded fixes before returning a blocker unless the unresolved decision could change their correctness; consolidate the remainder into one question with evidence, concrete options, a recommendation, and whether delivery can continue independently.
+- These classifications establish validity and scope, not edit authority. Apply the caller-supplied edit-authority policy when present; it may require a decision before an `in-scope blocker` is edited. Priority controls ordering and urgency and never expands that authority.
+- A fixer may apply independently authorized findings before returning a decision when the unresolved findings cannot change those fixes' correctness. Recheck the remainder against the resulting head, then return one consolidated targeted question under the caller's policy.
 - Reject unrealistic edge cases, speculative risks, broad rewrites, and over-complex fixes. Prefer small fixes at the right ownership boundary; refactor only when it clearly improves the bug class.
 - When an accepted finding shows a bug class or repeated pattern, inspect the current PR scope for sibling instances and fix the scoped bug class at once when practical. Stop at touched surfaces, owner boundaries, and clear follow-up territory.
 - Report security findings only when the change creates a concrete, actionable risk or removes an important safety check.
-- Do not stack or push review-triggered fix commits while scope classification or focused proof is unresolved.
+- Do not stack or push a review-triggered fix while that fix's own scope classification or focused proof is unresolved.
 
 ### Release Freeze
 

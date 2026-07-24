@@ -19,6 +19,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
+- Every `codex-pr-review` call carries **Review Finding Disposition** as the caller-supplied edit-authority policy.
 - Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
@@ -116,7 +117,7 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex report, classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Finding validity, severity, scope, and edit authority are separate: severity controls ordering and urgency, not permission to change the code.
+For each `code-review` or local Codex report, evaluate finding validity and scope, then classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Severity controls ordering and urgency, not edit authority.
 
 - Use `fix` without asking only for a verified finding clearly inside the approved ticket and owner boundary when the correction is small, local, reversible, has a known intended result, and has a focused verification path. Send only `fix` findings to a worker.
 - Use read-only investigation to resolve uncertainty. Classify the finding as `blocked` and return the smallest targeted decision question before editing when the correction changes product behavior or a contract, expands scope or ownership, is large or cross-cutting, reverses an approved scope reduction, materially enlarges the review unit, or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
@@ -129,14 +130,16 @@ Do not broaden implementation solely to satisfy documentation added or strengthe
 
 A **code-review cycle** is one two-axis report, one complete finding-disposition set, and at most one scoped fix batch. Apply **Review Finding Disposition** to the report.
 
-When no finding is `fix`, skip the worker and checks. Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. Advance to **Local Codex Review/Fix**. Start another code-review cycle only when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
+When no finding is `fix`, skip the worker and checks; return any blocker, otherwise advance to **Local Codex Review/Fix**.
+
+Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, start another code-review cycle to renew its evidence on the changed head and return it if it remains. When no blocker remains, advance to **Local Codex Review/Fix**. Start another code-review cycle only for that evidence renewal or when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
 
 Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
-Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When no valid in-scope findings remain, the conductor runs aggregate checks once.
+Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no valid in-scope findings remain, the conductor runs aggregate checks once.
 If aggregate checks fail, diagnose the failure. If the current ticket caused it and a repair fits the approved scope, spawn one worker to fix it, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks once more. If that rerun fails or the failure cannot be fixed within ticket scope, return a targeted blocker with evidence.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
