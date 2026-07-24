@@ -128,11 +128,13 @@ Do not broaden implementation solely to satisfy documentation added or strengthe
 
 #### Check Failure Disposition
 
-For any workflow-owned aggregate-check failure, diagnose the cause and classify any required repair under **Review Finding Disposition**.
+For any workflow-owned focused- or aggregate-check failure, diagnose the cause and classify any required repair under **Review Finding Disposition**.
 
-- For `fix`, run at most one repair batch with focused checks and a commit, then repeat the owning review on the changed head and run aggregate checks once more.
+- For `fix`, run at most one repair batch and its focused checks. Commit only after every required focused check passes, then repeat the owning review on the changed head and run aggregate checks once more.
 - For `not-actionable` or `out-of-scope`, continue only when evidence proves the failure does not gate this ticket and every required check passes; otherwise return a targeted check blocker with the responsible owner.
 - For `blocked`, return its targeted decision. A repeated failure or a repair that cannot be classified as `fix` also returns a targeted check blocker with evidence and owner.
+
+For a hosted-fix or hosted-check repair, **Local Codex Review/Fix** owns post-change review before hosted validation resumes.
 
 ### 4. Fix Code Review
 
@@ -170,11 +172,11 @@ Carry both values, the `codex-pr-review` task ID, every feedback handoff, and it
 
 For each feedback handoff:
 
-1. Verify the handoff expected head matches the PR and assigned worktree, then apply **Review Finding Disposition** to every finding or merge conflict.
+1. For a finding or merge-conflict handoff, verify its expected head matches the PR and assigned worktree, then apply **Review Finding Disposition**. For a head-changed handoff, identify the change owner and stop before disposition until the conductor has reconciled the new head and its required review evidence.
 2. For `not-actionable` and `out-of-scope`, prepare a receipt with the finding ID, disposition, evidence, and no-fix rationale. When the handoff contains no `fix` or `blocked` finding, resume the same PR worker on the unchanged head with those receipts.
-3. For independent `fix` findings, spawn one hosted-fix worker with the handoff evidence, ticket/spec, implementation packet when present, assigned worktree, and focused checks. The worker commits and pushes one scoped batch without running or delegating review.
+3. For independent `fix` findings, spawn one hosted-fix worker with the handoff evidence, ticket/spec, implementation packet when present, assigned worktree, and focused checks. The worker applies one scoped batch and runs focused checks without delegating review; it commits and pushes only after those checks pass. Apply **Check Failure Disposition** before any failed batch is committed.
 4. After a hosted-fix push, confirm the remote head, capture a new freshness boundary, run required aggregate checks and **Check Failure Disposition**, then return through **Local Codex Review/Fix** before resuming the same PR worker on the new head. Include fixed finding IDs, commit, checks, and current-head evidence in the receipts.
-5. Carry every deferred finding through the head change and require an explicit current-head disposition before sending its receipt, asking the user, or clearing it. Apply independent fixes first only when the unresolved decision cannot change their correctness.
+5. Carry every original handoff finding through the head change and require an explicit current-head disposition before sending its receipt, asking the user, or clearing it. Apply independent fixes first only when the unresolved decision cannot change their correctness.
 6. For `blocked`, return one consolidated targeted question through the orchestrator. Keep the handoff pending and resume the same chain after the answer.
 
 A caller-owned hosted feedback cycle is complete when every handoff finding has a current-head receipt, every implementation change has a fresh local Codex checkpoint and required checks, and the PR worker has consumed the receipts.
@@ -189,7 +191,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Local Codex checkpoint / normal entry`: run the normal ready-PR sequence above with its expected head and review-cycle freshness boundary.
 - `Local Codex checkpoint / feedback receipts leave the head unchanged`: resume the same PR worker on that head.
 - `Local Codex checkpoint / caller-owned hosted fix changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes.
-- `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
+- `Returned Local Codex / head changed`: resume the same PR worker with the new expected head, its latest freshness boundary, current receipts, and round history.
 - `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
 - `Carried Delivery checkpoint / no caller-owned edit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
 - `Carried Delivery checkpoint / any caller-owned edit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
