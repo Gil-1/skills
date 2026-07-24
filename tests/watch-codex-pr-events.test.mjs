@@ -80,6 +80,12 @@ test("composed selection keeps state changes ahead of Codex approval", () => {
   );
 });
 
+test("cheap initial state changes precede first full-snapshot approval", () => {
+  const cheapInitial = snapshot({ mergeStateStatus: "CLEAN" });
+  const firstFull = snapshot({ mergeStateStatus: "BLOCKED", status: "approved" });
+  assert.equal(selectEvent(cheapInitial, firstFull), "merge_state_changed");
+});
+
 test("symlinked CLI entrypoint still executes", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "watch-codex-pr-"));
   const symlinkPath = join(directory, "watch-codex-pr.mjs");

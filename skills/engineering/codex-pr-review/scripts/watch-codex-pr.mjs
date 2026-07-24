@@ -1507,14 +1507,16 @@ async function watch(options) {
   let target;
   let lastCheapStatus;
   let initial;
+  let initialStateEvent;
 
   try {
     target = await resolveTarget(rateAwareOptions);
     if (!options.once) lastCheapStatus = await readCheapStatusRateAware(target, rateAwareOptions);
     initial = await readSnapshotRateAware(target, rateAwareOptions);
     if (!options.once) {
-      const precedingEvent = stateChangeEvent(null, initial, options.expectedHead);
-      initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions, precedingEvent);
+      initialStateEvent = stateChangeEvent(lastCheapStatus, initial, options.expectedHead);
+      initial = await verifyDispositionedReviewEvidence(target, initial, rateAwareOptions, initialStateEvent);
+      initialStateEvent = stateChangeEvent(lastCheapStatus, initial, options.expectedHead);
     }
   } catch (error) {
     if (!(error instanceof WatcherTimeoutError)) throw error;
@@ -1535,7 +1537,7 @@ async function watch(options) {
     return;
   }
 
-  const initialEvent = selectEvent(null, initial, options.expectedHead);
+  const initialEvent = initialStateEvent ?? selectEvent(null, initial, options.expectedHead);
   if (initialEvent) {
     printResult({
       event: initialEvent,
