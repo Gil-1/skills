@@ -23,12 +23,17 @@ const sources = [
     inventoryUrl: "https://api.github.com/repos/Gil-1/skills/git/trees/main?recursive=1",
     skillNames: gilStableSkillNames,
   },
+  {
+    repository: "kunchenguid/lavish-axi",
+    inventoryUrl: "https://api.github.com/repos/kunchenguid/lavish-axi/git/trees/main?recursive=1",
+    skillNames: topLevelSkillNames,
+  },
 ];
 
 const usage = `Usage:
   node scripts/update-skills.mjs [--dry-run]
 
-Refreshes the published Matt Pocock and Gil skills for Claude Code, Codex, and OpenCode,
+Refreshes the published Matt Pocock, Gil, and Lavish skills for Claude Code, Codex, and OpenCode,
 then removes skills those sources no longer publish.
 `;
 
@@ -82,6 +87,18 @@ function gilStableSkillNames(tree, repository) {
   return tree.tree
     .filter((entry) => entry.type === "blob")
     .map((entry) => String(entry.path).match(/^skills\/engineering\/([^/]+)\/SKILL\.md$/)?.[1])
+    .filter(Boolean)
+    .sort();
+}
+
+function topLevelSkillNames(tree, repository) {
+  if (tree.truncated || !Array.isArray(tree.tree)) {
+    throw new Error(`${repository} returned an incomplete repository tree.`);
+  }
+
+  return tree.tree
+    .filter((entry) => entry.type === "blob")
+    .map((entry) => String(entry.path).match(/^skills\/([^/]+)\/SKILL\.md$/)?.[1])
     .filter(Boolean)
     .sort();
 }
@@ -419,4 +436,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   });
 }
 
-export { buildAddArgs, linkOpenCodeSkills, reconcilePublishedSkillLinks, resolveSkillPaths };
+export { buildAddArgs, linkOpenCodeSkills, reconcilePublishedSkillLinks, resolveSkillPaths, topLevelSkillNames };

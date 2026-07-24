@@ -13,7 +13,7 @@ These skills build on the excellent work in [Matt Pocock's skills repo](https://
 
 ## Install
 
-Synchronize the latest published Matt Pocock and Gil skills for Claude Code, Codex, and OpenCode:
+Synchronize the latest published Matt Pocock, Gil, and Lavish skills for Claude Code, Codex, and OpenCode:
 
 ```bash
 git clone https://github.com/Gil-1/skills.git
@@ -21,7 +21,7 @@ cd skills
 npm run skills:update
 ```
 
-The updater installs to the shared `~/.agents/skills` cache used by Codex and links the same skills into `~/.claude/skills` and `~/.config/opencode/skills`. It uses a tested CLI version to refresh the latest contents from both repositories, then removes skills that either source no longer publishes without touching skills owned by other sources. Preview the exact plan with `npm run skills:update:dry-run`.
+The updater installs to the shared `~/.agents/skills` cache used by Codex and links the same skills into `~/.claude/skills` and `~/.config/opencode/skills`. It uses a tested CLI version to refresh the latest contents from all three repositories, then removes skills that a managed source no longer publishes without touching skills owned by other sources. Preview the exact plan with `npm run skills:update:dry-run`.
 
 The stable Gil set includes:
 
