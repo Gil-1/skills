@@ -119,7 +119,7 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 For each `code-review` or local Codex finding, evaluate validity and scope before deciding edit authority, then classify it against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Severity controls ordering and urgency, not edit authority.
 
 - Use `fix` without asking only for a verified finding clearly inside the approved ticket and owner boundary when the correction is small, local, reversible, has a known intended result, and has a focused verification path. Send only `fix` findings to a worker.
-- Use read-only investigation to resolve uncertainty. Classify the finding as `blocked` and return the smallest targeted decision question before editing when the correction changes product behavior or a contract, expands scope or ownership, is large or cross-cutting, reverses an approved scope reduction, materially enlarges the review unit, or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
+- Use read-only investigation to resolve uncertainty. Classify the finding as `blocked` and return the smallest targeted decision question before editing when the correction changes product behavior, a contract, scope, or ownership; is large or cross-cutting; materially enlarges the review unit; or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
 - Use `not-actionable` with evidence for findings that are disproven, stale, intentional, duplicate, or speculative. Use `out-of-scope` with a no-fix rationale for a concrete adjacent issue that does not affect the current PR's safety; return a targeted decision instead when current delivery requires scope expansion or follow-up action.
 - Apply independent `fix` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, why they are unsafe to auto-fix, the smallest concrete options, a recommendation, and whether delivery can continue independently.
 
@@ -133,7 +133,7 @@ When no finding is `fix`, skip the worker and checks; return any blocker, otherw
 
 Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require an explicit current-head disposition before returning it or clearing it. When no blocker remains, advance to **Local Codex Review/Fix**. Start another code-review cycle only for that evidence renewal or when the fix batch materially changed design or scope; rerun aggregate checks after later code changes.
 
-Complete when every finding is dispositioned and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
+Complete when every finding has a current-head disposition and either a blocker is returned, no fix is required, or committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
