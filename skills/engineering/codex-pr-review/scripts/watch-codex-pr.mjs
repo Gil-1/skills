@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1415,6 +1416,8 @@ function fingerprint(summary) {
 
 function immediateEvent(snapshot, expectedHead) {
   if (expectedHead && !commitMatchesHead(snapshot.headRefOid, expectedHead)) return "pr_head_changed";
+  if (snapshot.state !== "OPEN") return "pr_state_changed";
+  if (["CONFLICTING", "DIRTY"].includes(snapshot.mergeStateStatus)) return "merge_state_changed";
   if (snapshot.status === "approved") return "codex_approved";
   if (snapshot.freshFeedbackCount > 0 || snapshot.freshActiveCodexThreadCount > 0) return "codex_feedback_changed";
   if (dispositionedReviewIsComplete(snapshot)) return "codex_review_complete";
@@ -1448,9 +1451,9 @@ async function verifyDispositionedReviewEvidence(target, snapshot, options) {
 
 function changeEvent(previous, current) {
   if (previous.headRefOid !== current.headRefOid) return "pr_head_changed";
-  if (previous.status !== current.status) return "codex_status_changed";
   if (previous.state !== current.state) return "pr_state_changed";
   if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
+  if (previous.status !== current.status) return "codex_status_changed";
   if (previous.fingerprint !== current.fingerprint) return "codex_feedback_changed";
   return undefined;
 }
@@ -1607,7 +1610,11 @@ async function watch(options) {
   });
 }
 
-watch(parseArgs(process.argv.slice(2))).catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+export { changeEvent, immediateEvent };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  watch(parseArgs(process.argv.slice(2))).catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
