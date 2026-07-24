@@ -28,7 +28,7 @@ Default to `internal`: follow the complete review/fix loop in this skill.
 
 When the caller explicitly sets `feedback-owner: caller`, keep the PR branch read-only and return code-changing work to the caller:
 
-- Return a **feedback handoff** for current-head watcher feedback, merge conflicts, applicable closure findings, or a repeated-pattern root cause before delegating a fixer or changing code. Include stable finding/thread identifiers, full evidence, priority, expected head, freshness boundary, round history, and the smallest continuation point.
+- Return a **feedback handoff** for current-head watcher feedback, merge conflicts, applicable closure findings, or a repeated-pattern trigger before delegating a fixer or changing code. Include stable finding/thread identifiers, full evidence, priority, expected head, freshness boundary, round history, and the smallest continuation point.
 - Accept caller disposition receipts on resume, apply their validity reactions, replies, and thread resolutions, and update round history without reclassifying them. If the caller changed the head, require its new expected head and freshness boundary.
 - Continue watching only after every handed-off finding has a receipt and the observed PR head matches the caller's expected head. Return any later code-changing recommendation as another feedback handoff.
 
@@ -77,7 +77,7 @@ Before reporting successful validation for the expected head, run one bounded cl
 
 - Detect a repeated pattern when two or more Codex rounds for the same PR intent cluster on the same file, theme, subsystem, invariant, or source-code decision. This is not terminal.
 - Also run the root-cause investigation after every third completed feedback round for the same PR intent, even when comments do not cluster. Count one round when a watcher-fresh feedback batch has final dispositions; do not count status-only polls or stale/duplicate feedback.
-- When either trigger fires in caller-owned mode, return an unclassified repeated-pattern handoff containing the trigger, relevant comments and receipts across heads, current code paths, and suspected invariant.
+- When either trigger fires in caller-owned mode, return an unclassified repeated-pattern handoff containing only the trigger and relevant raw comments and receipts across heads.
 - In internal mode, stop the comment-by-comment loop and create a root-cause packet: relevant Codex comments across heads, accepted/rejected dispositions, current code paths, linked ticket/PRD intent, tests already added, and the suspected invariant that keeps failing.
 - In internal mode, investigate whether the comments are symptoms of one wrong direction. Prefer a coherent same-PR fix when the root cause remains inside the current ticket/PRD contract and owner boundary.
 - During internal root-cause investigation, read the surrounding implementation and tests deeply enough to prove the intended behavior. Add or update focused tests for the invariant before requesting another Codex review when practical.

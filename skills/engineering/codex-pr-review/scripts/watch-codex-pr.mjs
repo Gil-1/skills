@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -1450,12 +1451,24 @@ async function verifyDispositionedReviewEvidence(target, snapshot, options) {
 }
 
 function changeEvent(previous, current) {
-  if (previous.headRefOid !== current.headRefOid) return "pr_head_changed";
-  if (previous.state !== current.state) return "pr_state_changed";
-  if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
+  const stateEvent = stateChangeEvent(previous, current);
+  if (stateEvent) return stateEvent;
   if (previous.status !== current.status) return "codex_status_changed";
   if (previous.fingerprint !== current.fingerprint) return "codex_feedback_changed";
   return undefined;
+}
+
+function stateChangeEvent(previous, current) {
+  if (previous.headRefOid !== current.headRefOid) return "pr_head_changed";
+  if (previous.state !== current.state) return "pr_state_changed";
+  if (previous.mergeStateStatus !== current.mergeStateStatus) return "merge_state_changed";
+  return undefined;
+}
+
+function selectEvent(previous, current, expectedHead) {
+  return (previous ? stateChangeEvent(previous, current) : undefined)
+    ?? immediateEvent(current, expectedHead)
+    ?? (previous ? changeEvent(previous, current) : undefined);
 }
 
 function slim(snapshot) {
@@ -1514,7 +1527,7 @@ async function watch(options) {
     return;
   }
 
-  const initialEvent = immediateEvent(initial, options.expectedHead);
+  const initialEvent = selectEvent(null, initial, options.expectedHead);
   if (initialEvent) {
     printResult({
       event: initialEvent,
@@ -1558,7 +1571,7 @@ async function watch(options) {
       if (!(error instanceof WatcherTimeoutError)) throw error;
       break;
     }
-    const event = immediateEvent(current, options.expectedHead) ?? changeEvent(initial, current);
+    const event = selectEvent(initial, current, options.expectedHead);
     if (event) {
       printResult({
         event,
@@ -1586,7 +1599,7 @@ async function watch(options) {
     finalSnapshotError = error.message;
   }
 
-  const finalEvent = immediateEvent(final, options.expectedHead) ?? changeEvent(current, final);
+  const finalEvent = selectEvent(current, final, options.expectedHead);
   if (finalEvent) {
     printResult({
       event: finalEvent,
@@ -1610,9 +1623,12 @@ async function watch(options) {
   });
 }
 
-export { changeEvent, immediateEvent };
+export { changeEvent, immediateEvent, selectEvent };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const isMain = process.argv[1]
+  && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+
+if (isMain) {
   watch(parseArgs(process.argv.slice(2))).catch((error) => {
     console.error(error.message);
     process.exit(1);

@@ -1,10 +1,20 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   changeEvent,
   immediateEvent,
+  selectEvent,
 } from "../skills/engineering/codex-pr-review/scripts/watch-codex-pr.mjs";
+
+const watcherPath = new URL(
+  "../skills/engineering/codex-pr-review/scripts/watch-codex-pr.mjs",
+  import.meta.url,
+);
 
 function snapshot(overrides = {}) {
   return {
@@ -55,4 +65,26 @@ test("head changes retain highest precedence", () => {
     changeEvent(snapshot(), snapshot({ headRefOid: "def456", state: "CLOSED" })),
     "pr_head_changed",
   );
+});
+
+test("composed selection keeps state changes ahead of Codex approval", () => {
+  const previous = snapshot();
+  assert.equal(
+    selectEvent(previous, snapshot({ headRefOid: "def456", status: "approved" })),
+    "pr_head_changed",
+  );
+  assert.equal(
+    selectEvent(previous, snapshot({ mergeStateStatus: "BLOCKED", status: "approved" })),
+    "merge_state_changed",
+  );
+});
+
+test("symlinked CLI entrypoint still executes", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "watch-codex-pr-"));
+  const symlinkPath = join(directory, "watch-codex-pr.mjs");
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  symlinkSync(watcherPath, symlinkPath);
+
+  const output = execFileSync(process.execPath, [symlinkPath, "--help"], { encoding: "utf8" });
+  assert.match(output, /^Usage: watch-codex-pr\.mjs/m);
 });
