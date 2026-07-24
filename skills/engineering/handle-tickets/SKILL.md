@@ -19,7 +19,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every `codex-pr-review` call carries **Review Finding Disposition**, **Check Failure Disposition**, the active hosted review checkpoint type, and the hosted-review transitions below as caller-supplied policies.
+- Every `codex-pr-review` call carries **Review Finding Disposition**, **Check Failure Disposition**, the required aggregate-check commands or identifiers, the active hosted review checkpoint type, and the hosted-review transitions below as caller-supplied policies.
 - Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
@@ -176,8 +176,8 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Local Codex checkpoint / scope-changing commit changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes; this includes a scope reduction or correction.
 - `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
 - `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
-- `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
-- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
+- `Carried Delivery checkpoint / no workflow-owned push changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
+- `Carried Delivery checkpoint / any workflow-owned push changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
 If aggregate checks fail after a hosted fixer push, apply **Check Failure Disposition**.
 
@@ -220,7 +220,7 @@ After a successful final outcome, if the Merge Lane requires a `Delivery checkpo
 
 If a targeted blocker prevented Codex validation, skip this check and return the blocker.
 
-Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a product or scope decision prevents a safe correction.
+Complete when the worker reports that the final diff fits the ticket with no `fix` or `blocked` finding, its prescribed correction passes fresh local and hosted Codex validation and the current-head recheck contains no `fix` or `blocked` finding, or a targeted product or scope decision prevents a safe correction.
 
 ### Ticket Conductor Handoff
 
