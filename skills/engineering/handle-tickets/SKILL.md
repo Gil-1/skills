@@ -77,7 +77,7 @@ When open PRs have required merge orders, the orchestrator runs one serial **mer
 
 The latest workflow-owned PR comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
+A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor classifies the required edits under **Review Finding Disposition**, delegates only an authorized rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -171,7 +171,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
 - `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
-If aggregate checks fail after a hosted fixer push, run one scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or repair outside approved scope returns a targeted blocker.
+If aggregate checks fail after a hosted fixer push, diagnose and classify the required repair under **Review Finding Disposition**. For `fix`, run one repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. A repeated failure or any other disposition returns its evidence-backed outcome.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
