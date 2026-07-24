@@ -17,9 +17,9 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
-- Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves, and the `codex-pr-review` orchestrator may spawn one fixer per feedback batch; those leaves and fixers must not delegate.
-- Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every `codex-pr-review` call carries **Review Finding Disposition**, **Check Failure Disposition**, the required aggregate-check commands or identifiers, the active hosted review checkpoint type, and the hosted-review transitions below as caller-supplied policies.
+- Phase workers complete their assigned lane without delegating. The `code-review` coordinator may spawn only its Standards and Spec leaves. The `codex-pr-review` worker runs with caller-owned feedback and must not spawn a fixer; the conductor may spawn one hosted-fix worker per handoff. Those leaves and fixers must not delegate.
+- Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: a caller-owned hosted fix returns through **Local Codex Review/Fix**, a prescribed scope correction follows **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
+- Every `codex-pr-review` call sets `feedback-owner: caller`. Pass feedback receipts and head/freshness continuity, but keep ticket policy, fix authority, checks, and review transitions in this skill.
 - Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
 
 ## Ticket Completion
@@ -117,7 +117,7 @@ Complete when the report makes blockers, missing implementation, and fix recomme
 
 ### Review Finding Disposition
 
-For every review finding, evaluate validity and scope before deciding edit authority. In each `code-review` or local Codex report, classify every finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`; hosted Codex applies the same authority rules after its own validity and scope classification. Severity controls ordering and urgency, not edit authority.
+For every review finding, evaluate validity and scope before deciding edit authority. Classify each `code-review`, local Codex, hosted Codex handoff, and scope-fit finding against the original ticket and approved scope as `fix`, `not-actionable`, `out-of-scope`, or `blocked`. Severity controls ordering and urgency, not edit authority.
 
 - Use `fix` without asking only for a verified finding clearly inside the approved ticket and owner boundary when the correction is small, local, reversible, has a known intended result, and has a focused verification path. Send only `fix` findings to a worker.
 - Use read-only investigation to resolve uncertainty. Classify the finding as `blocked` and return the smallest targeted decision question before editing when the correction changes product behavior or a contract, expands scope or ownership, is large or cross-cutting, reverses an approved scope reduction, materially enlarges the review unit, or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
@@ -160,9 +160,24 @@ Spawn a PR worker to perform this sequence:
 1. Confirm local `HEAD` matches the remote full head SHA.
 2. For a ready PR, use the freshness boundary captured immediately before the latest push; otherwise, capture the current UTC timestamp.
 3. Mark the PR ready for review if it is still a draft.
-4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
+4. Run `codex-pr-review` with `feedback-owner: caller`, that review-cycle freshness boundary, and expected head.
 
-Carry both values across resumptions.
+Carry both values, the `codex-pr-review` task ID, every feedback handoff, and its disposition receipts across resumptions.
+
+### Hosted Feedback Ownership
+
+`codex-pr-review` owns watching, status interpretation, feedback transport, reactions, thread resolution, and final validation. It does not classify ticket scope or change code in this phase. The conductor owns every hosted finding disposition, fix, check, and post-change transition.
+
+For each feedback handoff:
+
+1. Verify the handoff expected head matches the PR and assigned worktree, then apply **Review Finding Disposition** to every finding or merge conflict.
+2. For `not-actionable` and `out-of-scope`, prepare a receipt with the finding ID, disposition, evidence, and no-fix rationale. When the handoff contains no `fix` or `blocked` finding, resume the same PR worker on the unchanged head with those receipts.
+3. For independent `fix` findings, spawn one hosted-fix worker with the handoff evidence, ticket/spec, implementation packet when present, assigned worktree, and focused checks. The worker commits and pushes one scoped batch without running or delegating review.
+4. After a hosted-fix push, confirm the remote head, capture a new freshness boundary, run required aggregate checks and **Check Failure Disposition**, then return through **Local Codex Review/Fix** before resuming the same PR worker on the new head. Include fixed finding IDs, commit, checks, and current-head evidence in the receipts.
+5. Carry every deferred finding through the head change and require an explicit current-head disposition before sending its receipt, asking the user, or clearing it. Apply independent fixes first only when the unresolved decision cannot change their correctness.
+6. For `blocked`, return one consolidated targeted question through the orchestrator. Keep the handoff pending and resume the same chain after the answer.
+
+A caller-owned hosted feedback cycle is complete when every handoff finding has a current-head receipt, every implementation change has a fresh local Codex checkpoint and required checks, and the PR worker has consumed the receipts.
 
 A **hosted review checkpoint** is one of:
 
@@ -172,14 +187,14 @@ A **hosted review checkpoint** is one of:
 Use the checkpoint type and resulting head to choose the hosted-review transition:
 
 - `Local Codex checkpoint / normal entry`: run the normal ready-PR sequence above with its expected head and review-cycle freshness boundary.
-- `Local Codex checkpoint / ordinary in-scope hosted fix changes the head`: keep the fix and repeated hosted validation inside `codex-pr-review`.
-- `Local Codex checkpoint / scope-changing commit changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes; this includes a scope reduction or correction.
+- `Local Codex checkpoint / feedback receipts leave the head unchanged`: resume the same PR worker on that head.
+- `Local Codex checkpoint / caller-owned hosted fix changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes.
 - `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
 - `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
-- `Carried Delivery checkpoint / no workflow-owned push changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
-- `Carried Delivery checkpoint / any workflow-owned push changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
+- `Carried Delivery checkpoint / no caller-owned edit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
+- `Carried Delivery checkpoint / any caller-owned edit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
-If aggregate checks fail after a hosted fixer push, apply **Check Failure Disposition**.
+If aggregate checks fail after a hosted-fix push, apply **Check Failure Disposition** before local or hosted validation resumes.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -190,7 +205,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker requires human action.
+Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, every feedback handoff has been consumed, relevant aggregate checks pass after every caller-owned hosted fix or repair, and every such code change was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker requires human action.
 
 ### 7. Check Final Scope Fit
 
