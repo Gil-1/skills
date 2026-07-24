@@ -31,6 +31,10 @@ Fixer sub-agent:
   - `in-scope blocker`: introduced by the current diff, affects the same owner boundary, and can be fixed without changing the task contract.
   - `follow-up`: adjacent bug class, sibling surface, cleanup, or broader hardening track.
   - `blocked`: requires a new protocol/config/storage/public API contract, different owner boundary, release-process change, or product decision.
+- Finding validity, priority, scope, and edit authority are separate. Priority controls ordering and urgency, not permission to change the code.
+- Fix without asking only when a finding is verified, clearly inside the task contract and owner boundary, and the correction is small, local, reversible, has a known intended result, and has a focused verification path.
+- Use read-only investigation to resolve uncertainty. Before editing, return `blocked` with the smallest targeted question when the correction changes product behavior or a contract, expands scope or ownership, is large or cross-cutting, or leaves the finding's validity, intended behavior, safe correction, or verification unresolved.
+- Keep a concrete adjacent issue that does not affect the current PR's safety as a `follow-up` with a no-fix rationale. Apply independent bounded fixes before returning a blocker unless the unresolved decision could change their correctness; consolidate the remainder into one question with evidence, concrete options, a recommendation, and whether delivery can continue independently.
 - Reject unrealistic edge cases, speculative risks, broad rewrites, and over-complex fixes. Prefer small fixes at the right ownership boundary; refactor only when it clearly improves the bug class.
 - When an accepted finding shows a bug class or repeated pattern, inspect the current PR scope for sibling instances and fix the scoped bug class at once when practical. Stop at touched surfaces, owner boundaries, and clear follow-up territory.
 - Report security findings only when the change creates a concrete, actionable risk or removes an important safety check.
