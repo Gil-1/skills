@@ -215,21 +215,23 @@ On success, include only `PASS` after the heading.
 On failure, include `FAIL` followed by concise findings explaining why.
 Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
 
-If the PR needs a small scope correction:
+If the PR needs an authority-determined in-scope correction:
 
-1. Spawn a fix worker to apply it without dropping required behavior.
-2. Have the fix worker rerun relevant checks, commit, and push.
-3. Return to **Local Codex Review/Fix** for a fresh local review.
-4. Run hosted validation through **Ready PR and Run Codex PR Review**.
-5. Do not repeat **Check Final Scope Fit**.
+1. Treat a small, local, reversible correction with a known result as **prescribed**. Treat every other correction as **substantive** and apply the root-cause analysis required by **Review Finding Disposition** before editing.
+2. Spawn a fix worker to apply the correction without dropping required behavior.
+3. Have the fix worker rerun relevant checks, commit, and push, then record the full correction head SHA.
+4. Return to **Local Codex Review/Fix** for a fresh local review.
+5. Run hosted validation through **Ready PR and Run Codex PR Review**.
+6. For a prescribed correction, do not repeat **Check Final Scope Fit** only when local and hosted validation leave the implementation head at the recorded correction SHA.
+7. Repeat **Check Final Scope Fit** after any later head change to a prescribed correction and after every substantive correction; update the existing workflow-owned scope-fit comment with the rerun result.
 
-When the prescribed correction passes that validation, update the existing scope-fit comment so only `PASS` remains after the heading.
+When the prescribed correction passes unchanged-head validation, update the existing scope-fit comment so only `PASS` remains after the heading.
 
 After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
 
 If a targeted blocker prevented Codex validation, skip this check and return the blocker.
 
-Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a safe correction reaches the **Human Decision Boundary**.
+Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation on the recorded correction head, or a safe correction reaches the **Human Decision Boundary**.
 
 ### Ticket Conductor Handoff
 
