@@ -12,14 +12,14 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 ## Command Chain
 
 - The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user and resumes the same task chain with the answer.
-- The orchestrator assigns each ticket exactly one worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any replacement inherits the assigned worktree, branch, and current implementation packet path when present.
+- The orchestrator assigns each ticket exactly one active worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any conductor replacement inherits the active assignment and current implementation packet path when present. Replacing the assignment requires explicit user approval; close any open PR tied to the prior branch, invalidate its branch-bound evidence, atomically record the replacement assignment and PR plan, and resume at **Prepare the Worktree**. Record the replacement PR URL before any PR-dependent phase and rebind its Merge Lane when present.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
-- Every worker spawn prompt includes a **delegation contract**. A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Do not load orchestrator or coordinator skills such as handle-tickets or code-review. Return evidence, questions, and blockers to your parent.` The `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback batch and puts the same contract in each fixer prompt. Each coordinator handoff lists the direct child task IDs and roles; each leaf or fixer handoff states `Delegation: none`. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
+- Every conductor and worker spawn prompt includes `Skills allowed: <workflow skill names or none>` and a **delegation contract**. A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` Direct fix workers receive `Skills allowed: none` unless their grant names a skill. The `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback batch and puts the same contract in each fixer prompt. Each coordinator handoff lists the direct child task IDs and roles; each leaf or fixer handoff states `Delegation: none`. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every role that loads a workflow skill returns that skill's resolved base path and, when available, its matching standard-lock `source`, `skillPath`, and `skillFolderHash`; parents aggregate this provenance without creating another manifest.
+- Every role handoff includes one `Skills loaded:` field: `none`, or each workflow skill's name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Parents verify the field against that role's `Skills allowed` list and matching provenance before accepting its handoff; missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. Aggregate verified provenance without creating another manifest.
 
 ## Ticket Completion
 
@@ -90,8 +90,8 @@ For each assigned ticket:
 
 ### 1. Prepare the Worktree
 
-Create or verify only the ticket's assigned worktree and branch from the declared base.
-Never create or select an alternative worktree for the ticket.
+Create or verify only the ticket's active assigned worktree and branch from the declared base.
+After an explicitly approved replacement, retire the prior assignment before using the recorded replacement.
 
 Complete when `git status --short` is known and the branch contains only the ticket's intended work.
 
@@ -128,7 +128,7 @@ A review finding is a **candidate**, not edit authority. The conductor validates
 - **Trigger:** a focused reproducer, failing test, reachable execution path, or direct static proof demonstrates the current behavior. Inspect relevant guards, callers, tests, and counterevidence; a merely conceivable bypass or architecture preference is not enough.
 - **Expected result:** authoritative sources determine the required outcome, and a focused check can distinguish the corrected behavior from the current one.
 
-Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof reaches the **Human Decision Boundary**, convert the candidate to `blocked` with the exact missing input.
+Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof reaches the **Human Decision Boundary**, keep it `unresolved` and use disposition `blocked` with the exact missing input.
 
 Group candidates by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction did not establish the invariant, not authority for another isolated patch. Reopen the root cause, determine the smallest robust correction from existing authority, and verify the invariant across the supported input class. When that correction is large or cross-cutting but remains inside approved behavior and ownership, plan and implement it autonomously.
 
@@ -136,7 +136,7 @@ If the reviewed head is stale, required evidence is absent, or ungranted descend
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex candidate, apply **Review Finding Validation** before deciding edit authority. Map `rejected` candidates to `not-actionable` with evidence. Keep `unresolved` candidates in autonomous investigation without editing, or convert them to `blocked` only at the **Human Decision Boundary**. Classify a `confirmed` candidate with a causal path to the ticket as `fix` or `blocked`; classify a confirmed concrete defect without that path as `out-of-scope`. Severity controls ordering and urgency, not validity or edit authority.
+For each `code-review` or local Codex candidate, apply **Review Finding Validation** before deciding edit authority. Record exactly `Validity: confirmed | rejected | unresolved` and `Disposition: fix | not-actionable | out-of-scope | blocked | investigate`; allowed pairs are `confirmed` with `fix`, `out-of-scope`, or `blocked`; `rejected` with `not-actionable`; and `unresolved` with `investigate` or `blocked`. Map `rejected` candidates to `not-actionable` with evidence. Keep `unresolved` candidates in autonomous investigation without editing, or use `blocked` only at the **Human Decision Boundary**. Classify a `confirmed` candidate with a causal path to the ticket as `fix` or `blocked`; classify a confirmed concrete defect without that path as `out-of-scope`. Severity controls ordering and urgency, not validity or edit authority.
 
 - Use `fix` without asking for a confirmed finding when approved authority determines the intended result, the correction remains inside the approved ticket and owner boundary, and a focused verification path exists. A small, local, reversible correction is ready for the ordinary scoped fix batch. Before a large, cross-cutting, or repeated-family correction, use read-only root-cause analysis to record the robust design, affected responsibilities, and verification for one coherent fix batch.
 - Classify a confirmed finding as `blocked` and return the smallest targeted decision question only at the **Human Decision Boundary**.
@@ -153,7 +153,7 @@ When no confirmed finding is `fix`, skip the worker and checks; return any block
 
 Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require explicit current-head validation and disposition before returning it or clearing it. Run another current-head code-review cycle after the fix. Continue without a numeric review limit while review discovers confirmed in-scope findings that require correction; reject or investigate unsupported candidates instead of editing for them. When no blocker, confirmed fix, or unresolved candidate remains, advance to **Local Codex Review/Fix**. Rerun aggregate checks after later code changes.
 
-Complete when every candidate has a current-head validation result and resulting disposition, and either a blocker is returned, no confirmed fix is required, or committed fixes pass focused and aggregate checks.
+Complete when every candidate has a current-head validation result and resulting disposition, and either a blocker is returned or all of these hold: no candidate remains unresolved, no `fix` disposition remains unapplied, and any committed fixes pass focused and aggregate checks.
 
 ### 5. Local Codex Review/Fix
 
@@ -235,7 +235,7 @@ Complete when the worker reports that the final diff fits the ticket, its prescr
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, loaded workflow skill provenance from the existing lock or resolved base paths, merge-ready yes/no, next action, and owner.
+The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner.
 
 ## PR Cleanup
 
