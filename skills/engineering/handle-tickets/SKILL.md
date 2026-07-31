@@ -23,9 +23,13 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 
 ## Ticket Completion
 
-A ticket is complete only when its PR is merge-ready or a targeted blocker requires human decision, authority, access, required review, or merge action. Merge-ready means all `code-review` blockers are resolved, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. A Codex watcher timeout remains a conductor-owned checkpoint only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
+A ticket is complete only when its PR is merge-ready or a targeted blocker reaches the **Human Decision Boundary** below. Merge-ready means all `code-review` blockers are resolved, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. A Codex watcher timeout remains a conductor-owned checkpoint only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
 
 By default, stop at `merge-ready`. Do not treat this workflow alone as authorization to merge a PR or enable auto-merge.
+
+## Human Decision Boundary
+
+Keep delivery autonomous while approved repository authority and available evidence determine a safe in-scope next action. A **Human Decision Boundary** exists only when approved sources do not determine required product behavior, contract, scope, or ownership; required external authority, access, review, or merge action is missing; or proceeding necessarily changes an approved decision. Complexity, diff size, cross-cutting work, repeated failure, and technical uncertainty that code, tests, or focused experiments can resolve do not cross this boundary. Investigate, plan, implement, and verify autonomously until the issue is resolved or the boundary is proven; every targeted question identifies the exact missing input and why the repository cannot supply it.
 
 ## Orchestrator Loop
 
@@ -97,7 +101,7 @@ Before spawning implementation, decide whether the ticket and linked spec alread
 
 The packet has no length limit. Preserve every implementation-relevant fact not already captured in referenced authoritative artifacts, including corrections or decisions about root cause, selected design, mistake-preventing rejected directions, invariants, scope, ownership, compatibility, verification, unresolved questions, and operational state. Exclude raw investigation logs and repeated source content; reference existing issues, specs, ADRs, commits, diffs, files, and URLs instead. Redact sensitive information.
 
-If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation or a human blocker. Return a targeted blocker only when existing repository authority cannot determine required product behavior, contract, scope, or ownership; required external authority or access is missing; or proceeding necessarily changes an approved decision. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
+If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
 
 Spawn a worker with `implement`, the ticket, linked PRD context when present, implementation packet path when present, assigned worktree and branch, and verification expectations.
 Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
@@ -124,9 +128,7 @@ A review finding is a **candidate**, not edit authority. The conductor validates
 - **Trigger:** a focused reproducer, failing test, reachable execution path, or direct static proof demonstrates the current behavior. Inspect relevant guards, callers, tests, and counterevidence; a merely conceivable bypass or architecture preference is not enough.
 - **Expected result:** authoritative sources determine the required outcome, and a focused check can distinguish the corrected behavior from the current one.
 
-Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof is an authority, decision, or access fact that the repository cannot supply, convert the candidate to `blocked` with the exact missing input.
-
-Technical uncertainty remains conductor-owned investigation. Return a human blocker only when the repository's existing authority cannot determine required product behavior, contract, scope, or ownership; required external authority or access is missing; or the safe correction necessarily changes an approved decision. Complexity, diff size, cross-cutting implementation, or uncertainty that code and focused experiments can resolve do not require human approval.
+Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof reaches the **Human Decision Boundary**, convert the candidate to `blocked` with the exact missing input.
 
 Group candidates by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction did not establish the invariant, not authority for another isolated patch. Reopen the root cause, determine the smallest robust correction from existing authority, and verify the invariant across the supported input class. When that correction is large or cross-cutting but remains inside approved behavior and ownership, plan and implement it autonomously.
 
@@ -134,11 +136,11 @@ If the reviewed head is stale, required evidence is absent, or ungranted descend
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex candidate, apply **Review Finding Validation** before deciding edit authority. Map `rejected` candidates to `not-actionable` with evidence. Keep `unresolved` candidates in autonomous investigation without editing, or convert them to `blocked` only for the missing-human-input conditions above. Classify a `confirmed` candidate with a causal path to the ticket as `fix` or `blocked`; classify a confirmed concrete defect without that path as `out-of-scope`. Severity controls ordering and urgency, not validity or edit authority.
+For each `code-review` or local Codex candidate, apply **Review Finding Validation** before deciding edit authority. Map `rejected` candidates to `not-actionable` with evidence. Keep `unresolved` candidates in autonomous investigation without editing, or convert them to `blocked` only at the **Human Decision Boundary**. Classify a `confirmed` candidate with a causal path to the ticket as `fix` or `blocked`; classify a confirmed concrete defect without that path as `out-of-scope`. Severity controls ordering and urgency, not validity or edit authority.
 
 - Use `fix` without asking for a confirmed finding when approved authority determines the intended result, the correction remains inside the approved ticket and owner boundary, and a focused verification path exists. A small, local, reversible correction is ready for the ordinary scoped fix batch. Before a large, cross-cutting, or repeated-family correction, use read-only root-cause analysis to record the robust design, affected responsibilities, and verification for one coherent fix batch.
-- Classify a confirmed finding as `blocked` and return the smallest targeted decision question only when the correction requires product behavior, contract, scope, or ownership not determined by existing approved authority; necessarily changes an approved decision; or requires missing human authority or access. Do not use `blocked` for implementation complexity or technical uncertainty the conductor can resolve from code, tests, and focused experiments.
-- Use `not-actionable` with evidence for findings that are disproven, stale, intentional, duplicate, or speculative. Use `out-of-scope` with a no-fix rationale for a concrete adjacent issue that does not affect the current PR's safety; return a targeted decision instead when current delivery requires scope expansion or follow-up action.
+- Classify a confirmed finding as `blocked` and return the smallest targeted decision question only at the **Human Decision Boundary**.
+- Use `not-actionable` with evidence for findings that are disproven, stale, intentional, duplicate, or speculative. Use `out-of-scope` with a no-fix rationale for a concrete adjacent issue that does not affect the current PR's safety; return a targeted decision at the **Human Decision Boundary** when current delivery requires scope expansion or follow-up action.
 - Apply independent `fix` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, why they are unsafe to auto-fix, the smallest concrete options, a recommendation, and whether delivery can continue independently.
 
 Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
@@ -157,7 +159,7 @@ Complete when every candidate has a current-head validation result and resulting
 
 Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
 Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no confirmed in-scope findings remain and no candidate is unresolved, the conductor runs aggregate checks once.
-If aggregate checks fail, diagnose the failure. If the current ticket caused it and existing authority determines a repair inside approved scope, spawn one worker for one coherent repair batch, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks again. Continue diagnosis, repair, fresh review, and aggregate verification until they pass or the failure requires missing human authority, access, or an unapproved product, contract, scope, or ownership decision.
+If aggregate checks fail, diagnose the failure. If the current ticket caused it and existing authority determines a repair inside approved scope, spawn one worker for one coherent repair batch, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks again. Continue diagnosis, repair, fresh review, and aggregate verification until they pass or reach the **Human Decision Boundary**.
 After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
 
 Complete when no confirmed in-scope findings or unresolved candidates remain, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence.
@@ -188,7 +190,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
 - `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
 
-If aggregate checks fail after a hosted fixer push, diagnose them and run one coherent scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. Continue diagnosis, repair, and hosted validation while existing authority determines an in-scope correction; return a targeted blocker only for missing human authority, access, or an unapproved product, contract, scope, or ownership decision.
+If aggregate checks fail after a hosted fixer push, diagnose them and run one coherent scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. Continue diagnosis, repair, and hosted validation while existing authority determines an in-scope correction; return a targeted blocker only at the **Human Decision Boundary**.
 
 If the PR worker times out while PR-body Codex status remains `reviewing`:
 
@@ -199,7 +201,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker requires human action.
+Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
 
 ### 7. Check Final Scope Fit
 
@@ -227,7 +229,7 @@ After a successful final outcome, if the Merge Lane requires a `Delivery checkpo
 
 If a targeted blocker prevented Codex validation, skip this check and return the blocker.
 
-Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a product or scope decision prevents a safe correction.
+Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation, or a safe correction reaches the **Human Decision Boundary**.
 
 ### Ticket Conductor Handoff
 
