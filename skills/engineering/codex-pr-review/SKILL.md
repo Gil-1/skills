@@ -52,7 +52,7 @@ Fixer sub-agent:
 
 ## Review Ledger Closure
 
-Before reporting successful validation for the expected head, run one bounded closure pass over unresolved Codex-authored review threads. Fetch unresolved threads rather than replaying resolved history.
+Before reporting successful validation for the expected head, run one bounded closure pass over unresolved Codex-authored review threads. Fetch unresolved threads rather than replaying resolved history. A successful watcher result, including `THUMBS_UP`, is provisional until this closure pass completes; do not describe the PR as approved, PASS, or merge-ready before then.
 
 - If a thread's finding no longer applies to the current head, record the stale or already-fixed disposition, apply the validity reaction, reply when required, and resolve it without reopening the finding.
 - If the defect still exists on the current head, process it through Review Discipline and Severity Handling. Any fixer commit changes the expected head and restarts hosted validation before another closure pass.

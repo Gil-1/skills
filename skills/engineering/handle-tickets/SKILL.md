@@ -11,15 +11,29 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 
 ## Command Chain
 
-- The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user and resumes the same task chain with the answer.
+- The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user, then resumes the ticket's recorded conductor with the answer; it does not perform conductor-owned phase work itself. Complete when that conductor returns a new handoff.
 - The orchestrator assigns each ticket exactly one active worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any conductor replacement inherits the active assignment and current implementation packet path when present. Replacing the assignment requires explicit user approval; close any open PR tied to the prior branch, invalidate its branch-bound evidence, atomically record the replacement assignment and PR plan, and resume at **Prepare the Worktree**. Record the replacement PR URL before any PR-dependent phase and rebind its Merge Lane when present.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
-- Every conductor and worker spawn prompt includes `Skills allowed: <workflow skill names or none>` and a **delegation contract**. A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` Direct fix workers receive `Skills allowed: none` unless their grant names a skill. The `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback batch and puts the same contract in each fixer prompt. Each coordinator handoff lists the direct child task IDs and roles; each leaf or fixer handoff states `Delegation: none`. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
+- Every conductor and worker spawn prompt ends with this exact footer:
+
+  ```text
+  Skills allowed: <workflow skill names or none>
+  Delegation: <none or exact delegated roles>
+  ```
+
+  A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` Direct fix workers receive `Skills allowed: none` unless their grant names a skill. The `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback batch and puts the same contract in each fixer prompt. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
-- Every role handoff includes one `Skills loaded:` field: `none`, or each workflow skill's name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Parents verify the field against that role's `Skills allowed` list and matching provenance before accepting its handoff; missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. Aggregate verified provenance without creating another manifest.
+- Every role handoff ends with this exact footer:
+
+  ```text
+  Skills loaded: <none or verified skill provenance>
+  Delegation: <none or direct child task IDs and roles>
+  ```
+
+  Each coordinator lists its direct child task IDs and roles; each leaf or fixer states `Delegation: none`. Parents verify both fields against the role's grant before accepting its handoff. Missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. For each loaded skill, provenance includes its name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Aggregate verified provenance without creating another manifest.
 
 ## Ticket Completion
 
@@ -80,7 +94,12 @@ When open PRs have required merge orders, the orchestrator runs one serial **mer
 
 The latest workflow-owned PR comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**: the conductor delegates the rebase and conflict reconciliation, waits for the automatically started checks, and runs `codex-pr-review` for the updated PR. A successful mechanical integration outcome renews the `Delivery checkpoint` with the previous scope-fit result. A substantive implementation or scope change returns the conductor to the appropriate delivery phase.
+A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**. The conductor delegates the integration and conflict reconciliation, then classifies the result before selecting the next phase:
+
+- A **mechanical integration** changes only ancestry and conflict-free combination. Wait for the automatically started checks, run `codex-pr-review` using the carried `Delivery checkpoint`, and renew that checkpoint with the previous scope-fit result after successful hosted validation.
+- A **substantive integration** requires semantic conflict choices or branch-authored code, test, or documentation changes. Invalidate the carried checkpoint and resume at **Code Review**, followed by Local Codex, hosted Codex, and final scope fit.
+
+When a previously merge-ready PR enters an integration refresh, immediately post or update one workflow-owned PR comment whose first line is exactly `## Delivery status`. Record the current full head SHA, prior checkpoint head, new base, reason for refresh, and current phase. After classification, update the same comment with the current full head SHA, `mechanical` or `substantive`, the invalidated checkpoints, and the next required phase. Keep updating that comment at phase transitions and after branch updates; do not number it or create renewal status comments.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -115,7 +134,7 @@ Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context 
 Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket.
 When it promises more than the ticket requires, recommend narrowing the documentation.
 Tell the coordinator to apply the delegation contract above and report every finding as a candidate with the reviewed full head SHA, governing authority, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, and focused verification.
-Post the report as a workflow-owned PR comment when the tracker supports PR comments.
+Post or update one workflow-owned PR comment whose first line is exactly `## Code review` when the tracker supports PR comments. After the candidate report, include `Head`, `Cycle: initial | renewal | integration`, and mark each candidate as pending validation. After conductor validation and disposition, update that same comment with the current findings and dispositions. Replace the prior current-state report instead of creating numbered renewal comments.
 
 Complete when the report pins the reviewed head and provides enough evidence to validate every candidate finding, including blockers, missing implementation, and fix recommendations.
 
@@ -174,6 +193,7 @@ Spawn a PR worker to perform this sequence:
 4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
 
 Carry both values across resumptions.
+Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting ordinary in-scope fixes inside the same hosted-review phase.
 
 A **hosted review checkpoint** is one of:
 
@@ -188,7 +208,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
 - `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
 - `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
-- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to the appropriate local-review, hosted-review, and scope-fit delivery phases before posting a new `Delivery checkpoint`.
+- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, invalidate the carried scope-fit and delivery evidence, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before posting a new `Delivery checkpoint`.
 
 If aggregate checks fail after a hosted fixer push, diagnose them and run one coherent scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. Continue diagnosis, repair, and hosted validation while existing authority determines an in-scope correction; return a targeted blocker only at the **Human Decision Boundary**.
 
@@ -201,7 +221,7 @@ If the PR worker times out while PR-body Codex status remains `reviewing`:
 
 Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
 
-Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
+Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, reports Review Ledger Closure complete with zero unresolved Codex-authored threads, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
 
 ### 7. Check Final Scope Fit
 
@@ -235,7 +255,7 @@ Complete when the worker reports that the final diff fits the ticket, its prescr
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head and review-cycle freshness boundary, final scope-fit result and any correction commits, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner.
+The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head, review-cycle freshness boundary, and review-ledger closure, final scope-fit result and any correction commits, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner.
 
 ## PR Cleanup
 
