@@ -59,6 +59,8 @@ A **Code Review** phase cycle contributes one finalized comment after finding va
 
 Use source URLs, repository paths, commit SHAs, and prior comment URLs as references instead of copying content that already has a canonical home. A successor comment links its immediate predecessor so a fresh agent can traverse the decision history on demand.
 
+Each `## Code review` comment is a **current decision delta** for one Head. It contains `Head`, `Fixed point`, cycle, predecessor URL, intervening fix commit when present, a concise current-Head verification reference for prior corrections, and the current findings whose decision first appears or changes on that Head. Each current finding records its ID and validity; a rejected finding records concise disproving evidence, while every other finding records its delivery requirement, disposition, concise evidence, and applicable correction or follow-up priority. The outcome groups current `fix-now`, `follow-up`, `investigate`, and `blocked` IDs. A clean cycle records `Current findings: none` and `Outcome: PASS`. The predecessor chain carries earlier corrected, rejected, and unchanged decisions.
+
 A **checkpoint** is a current, head-bound outcome record that authorizes a later transition. A **continuation packet** records resumable state and is not validation evidence.
 
 ## Worker Context
@@ -69,7 +71,7 @@ A **review packet** is a ticket-owned temporary file used to move raw review evi
 
 A **hosted-fixer packet** follows the same ticket-owned path, atomic write, completion-marker, conductor verification, and immediate orchestrator-recording rules. The PR worker finishes it with `## Packet complete` and returns only its path, expected Head, and authorized decision URL. After the implementation/fix worker returns a complete hosted-fixer handoff, the conductor removes the packet and then clears its recorded path.
 
-For a renewal review, pass the immediately previous code-review comment URL and intervening fix commit to both retained reviewers. Tell each reviewer to verify prior corrections and review the full current fixed-point-to-Head change for new qualifying findings. Prior review dispositions are context, not requirement sources: reopen one when new current-head evidence changes its validity or **Delivery Scope**, including a regression, an incomplete correction, or newly applicable requirements.
+For a renewal review, pass the immediately previous code-review comment URL and intervening fix commit to both retained reviewers. Tell each reviewer to verify prior corrections, review the full current fixed-point-to-Head change, and return current qualifying findings that are newly observed or reopened by changed current-head evidence to the code-review worker. That worker writes the aggregate review packet with a compact prior-correction verification summary and current evidence references linked to the predecessor. Prior review dispositions are context, not requirement sources: reopen one when new current-head evidence changes its validity or **Delivery Scope**, including a regression, an incomplete correction, or newly applicable requirements.
 
 ## Scope Guard
 
@@ -85,7 +87,7 @@ Its handoff to the conductor contains:
 
 - Review phase and reviewed `Head`
 - `Decision: clear | fixes-required | investigate | blocked`
-- Finalized decision content for the conductor to publish
+- Finalized current finding decisions for the conductor to place in the current decision delta
 - `fix-now` finding IDs and durable references
 - Follow-up finding IDs with their priorities and durable references
 - `investigate` and `blocked` finding IDs with the exact missing evidence or input
@@ -188,7 +190,7 @@ For Spec review, use the ticket body, relevant authoritative ticket comments, li
 Treat documentation added or strengthened by the diff as implementation under review against the ticket's requirement sources. Narrow promises beyond what the ticket requires.
 The code-review worker launches both reviewers on the implementation Head. Keep that Head unchanged until both reviewers return, then have the worker group their raw findings by invariant in the review packet.
 The evidence requirements below supersede `code-review`'s reviewer length guidance. Tell both reviewers to report every finding with the reviewed full Head SHA, requirement source, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, focused verification, and smallest sufficient correction.
-When the packet contains findings, the conductor resumes the Scope Guard with its path, receives its finalized decisions, and publishes the cycle as `## Code review`. When the packet outcome is `clear`, the conductor records the clean cycle directly. Include `Head`, `Fixed point`, `Cycle: <number> (initial | renewal | integration)`, the previous review comment URL when one exists, and the intervening review-fix commit when one exists. For findings, record each validity, applicable delivery requirement and disposition, requirement source, evidence, and correction or follow-up priority.
+When the packet contains findings, the conductor resumes the Scope Guard with its path, receives its finalized decisions, and publishes the cycle as the **current decision delta** defined by **PR Comment Policy**. When the packet outcome is `clear`, the conductor publishes the clean-cycle form directly.
 
 Complete when both retained reviewers report on the same current Head and either report no findings or provide a completed review packet from which the Scope Guard returns a decision for every finding.
 
@@ -322,7 +324,7 @@ The conductor handoff contains:
 - The current hosted-fixer packet path while hosted fix execution remains resumable
 - Links to current review, check, local Codex, hosted Codex, and scope-fit evidence
 - Concise prose `Acceptance evidence` citing implementation and verification for every ticket criterion
-- Outstanding findings grouped by `follow-up`, `investigate`, and `blocked`, with applicable priority, evidence, next action, and owner
+- Current outstanding findings grouped by `follow-up`, `investigate`, and `blocked`, with applicable priority, evidence, next action, and owner
 - The implementation packet path only while delivery is blocked or resumable
 - The durable continuation reference, wake condition, `expectedHeadRefOid`, and `statusFreshAfter` while hosted review is waiting, blocked, or resumable
 - The next workflow action and owner
