@@ -186,7 +186,8 @@ Map the evidence to a disposition:
 - `confirmed` + `yes` -> `fix-now`, or `blocked` at the **Human Decision Boundary**.
 - `confirmed` + `no` -> `follow-up`, with `Priority: high | medium | low`, expected value, evidence, and why delivery can proceed without it.
 - `rejected` + `no` -> `not-actionable`, with the evidence that disproves or supersedes it.
-- `unknown` with `confirmed` or `unresolved` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
+- `confirmed` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
+- `unresolved` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
 
 Send `fix-now` findings to a worker. Preserve follow-ups in the final handoff; their implementation or publication as tracker tickets requires separate authority. Severity controls urgency within a disposition, not validity, PR requirement, or edit authority.
 Apply independent `fix-now` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, exact missing input, a recommendation, and whether delivery can continue independently.
