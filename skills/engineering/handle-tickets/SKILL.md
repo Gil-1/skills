@@ -13,21 +13,21 @@ Use the configured `worker` subagent for implementation and conductor-owned fixe
 
 ## Command Chain
 
-- The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user, then resumes the ticket's recorded conductor with the answer. On runtimes without nested delegation, the orchestrator assumes conductor responsibilities and spawns phase workers directly. Complete when the ticket has a new conductor handoff.
+- The **ticket orchestrator** is the only user-facing role and the only role that may make interactive question calls; it delegates per-ticket delivery to conductors. Every conductor and worker spawn prompt tells the agent to return targeted questions and blockers to its parent instead of asking interactively. The orchestrator asks the user, then resumes the ticket's recorded conductor with the answer. On runtimes without nested delegation, the orchestrator assumes conductor responsibilities, spawns phase workers directly, and runs the embedded review after implementation. Complete when the ticket has a new conductor handoff.
 - The orchestrator assigns each ticket exactly one active worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any conductor replacement inherits the active assignment, implementation/fix worker task ID, active review task IDs, and current implementation packet path when present. Replacing the assignment requires explicit user approval; close any open PR tied to the prior branch, invalidate its branch-bound evidence, atomically record the replacement assignment and PR plan, and resume at **Prepare the Worktree**. Record the replacement PR URL before any PR-dependent phase and rebind its Merge Lane when present.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. For hosted review, obtain and carry `expectedHeadRefOid` and `statusFreshAfter` exactly as `codex-pr-review` defines them.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - When a saved task cannot be resumed, continue that role in a fresh task with its current **Worker Context** and latest handoff when available, and record the new task ID.
-- Every conductor and worker spawn prompt ends with this exact footer:
+- Every conductor and worker spawn or resumption prompt ends with this exact footer:
 
   ```text
   Skills allowed: <workflow skill names or none>
   Delegation allowed: <none or exact delegated roles>
   ```
 
-  A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` The implementation/fix worker receives `Skills allowed: implement, tdd` and `Delegation allowed: none`, plus any named diagnostic skill the conductor grants. The conductor receives `code-review` and grants the direct roles required by the phases below. Review leaves receive `Delegation allowed: none`; the PR worker receives the fixer grant defined by `codex-pr-review`. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
+  A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` The implementation/fix worker receives `Skills allowed: implement, tdd, code-review`, plus any named diagnostic skill the conductor grants. Its invocations through embedded review grant the Standards and Spec leaves required by `code-review`; later fix invocations receive `Delegation allowed: none`. The conductor receives `code-review` and grants the direct roles required by the phases below. Review leaves receive `Delegation allowed: none`; the PR worker receives the fixer grant defined by `codex-pr-review`. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
 - Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: hosted review fixes remain inside `codex-pr-review`, a prescribed scope correction follows **Check Final Scope Fit**, and a mechanical integration refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
 - Every role handoff ends with this exact footer:
 
@@ -37,6 +37,7 @@ Use the configured `worker` subagent for implementation and conductor-owned fixe
   ```
 
   Each coordinator lists its direct child task IDs and roles; each leaf or fixer states `Children spawned: none`. Parents verify the receipt against the role's grant before accepting its handoff. Missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. For each loaded skill, provenance includes its name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Aggregate verified provenance without creating another manifest.
+  Delegation grants and `Children spawned` receipts apply to the current spawn or resumption.
 
 ## Ticket Completion
 
@@ -142,7 +143,7 @@ The packet has no length limit. Preserve every implementation-relevant fact not 
 If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to the implementation/fix worker as working context. The original ticket and linked approved specs or decisions remain requirement sources, while the fixed point, diff, and packet are evidence or context under review. Promote any approved design or scope decision reviewers need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
 
 Spawn the ticket's implementation/fix worker with `implement`, the references required by **Worker Context**, the implementation packet path when present, and verification expectations. Record its task ID immediately, before waiting for its handoff.
-`handle-tickets` owns review. Every implementation/fix prompt states: `Omit implement's code-review step; after verification and commit, return to the conductor.`
+Tell it to follow `implement`, committing the complete implementation before running its embedded `code-review` on that Head and including the report in its handoff. On runtimes without nested delegation, it returns after commit for the orchestrator-owned embedded review. Later conductor-owned fix prompts return after verification and commit.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 Enter **Code Review** on the resulting Head.
 
@@ -155,6 +156,7 @@ The conductor runs `code-review` and records its Standards and Spec reviewer tas
 For Spec review, use the ticket body, relevant authoritative ticket comments, linked approved specifications and decisions, and every acceptance criterion as the spec source; include unproven requirements among qualifying findings and return them as prose.
 
 Treat documentation added or strengthened by the diff as implementation under review against the ticket's requirement sources. Narrow promises beyond what the ticket requires.
+Launch both reviewers on the implementation Head, then apply **Review Finding Validation** and **Delivery Scope** to the embedded report while they run. Keep that Head unchanged until both reviewers return, then group all findings by invariant and finalize their dispositions before one review-fix batch.
 The evidence requirements below supersede `code-review`'s reviewer length guidance. Tell both reviewers to report every finding with the reviewed full Head SHA, requirement source, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, focused verification, and smallest sufficient correction.
 After the conductor validates and dispositions every finding, record the finalized cycle as `## Code review`. Include `Head`, `Fixed point`, `Cycle: <number> (initial | renewal | integration)`, the previous review comment URL when one exists, and the intervening review-fix commit when one exists. Record each finding's validity, applicable delivery requirement and disposition, requirement source, evidence, and correction or follow-up priority.
 
