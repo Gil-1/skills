@@ -21,10 +21,18 @@ test("handle-tickets keeps workflow comments append-only", async () => {
   assert.match(skill, /## PR Comment Policy/u);
   assert.match(skill, /Workflow-owned PR comments are append-only/u);
   assert.match(skill, /code-review cycle posts exactly one finalized comment/u);
+  assert.match(skill, /resulting commit is the visible fix receipt/u);
   assert.doesNotMatch(
     skill,
     /post or update|update the same comment|update the existing|replace the prior current-state|keep updating that comment/iu,
   );
+});
+
+test("handle-tickets keeps review cycles evidence-driven without new categories", async () => {
+  const skill = await readFile(skillUrl, "utf8");
+
+  assert.match(skill, /Continue without a numeric review limit/u);
+  assert.doesNotMatch(skill, /large[- ]solution/iu);
 });
 
 test("handle-tickets separates validity from merge relevance", async () => {
@@ -70,4 +78,15 @@ test("handle-tickets applies merge relevance to hosted findings", async () => {
     /return every hosted candidate to the conductor before authorizing a fixer/u,
   );
   assert.match(hostedReview, /resumes the same PR worker with only finalized `fix-now` findings authorized/u);
+});
+
+test("handle-tickets preserves conductor, integration, rebinding, and hosted closure", async () => {
+  const skill = await readFile(skillUrl, "utf8");
+
+  assert.match(skill, /resumes or waits for a live conductor instead of spawning another/u);
+  assert.match(skill, /\*\*mechanical integration\*\*/u);
+  assert.match(skill, /\*\*substantive integration\*\*/u);
+  assert.match(skill, /replacement fixed point/u);
+  assert.match(skill, /rebind the fixed point to the integrated base full SHA/u);
+  assert.match(skill, /Review Ledger Closure complete with zero unresolved Codex-authored threads/u);
 });
