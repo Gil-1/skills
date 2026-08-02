@@ -9,7 +9,7 @@ Run this skill as the **ticket orchestrator** for existing implementation-ready 
 
 Referenced skills own phase mechanics. The ticket conductor owns worker scope, phase boundaries, sequencing, retries, and Ticket Completion.
 
-Use the configured `worker` subagent for implementation and conductor-owned fixes when available; otherwise use the runtime's usual subagent. Reuse one implementation/fix task per ticket.
+Use the configured `worker` subagent for implementation and conductor-owned fixes when available; otherwise use the runtime's usual subagent.
 
 ## Command Chain
 
