@@ -136,7 +136,7 @@ The packet has no length limit. Preserve every implementation-relevant fact not 
 
 If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
 
-Spawn a worker with the ticket URL, only additional authority not discoverable from that ticket or repo instructions, the implementation packet path when present, assigned worktree and branch, and verification expectations.
+Spawn a worker with `implement` and the references required by **Reference Context**, plus the implementation packet path when present and verification expectations.
 Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
 
@@ -161,7 +161,7 @@ A review finding is a **candidate**, not edit authority. The conductor validates
 - **Trigger:** a focused reproducer, failing test, reachable execution path, or direct static proof demonstrates the current behavior. Inspect relevant guards, callers, tests, and counterevidence; a merely conceivable bypass or architecture preference is not enough.
 - **Expected result:** authoritative sources determine the required outcome, and a focused check can distinguish the corrected behavior from the current one.
 
-Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof reaches the **Human Decision Boundary**, keep it `unresolved` and use disposition `blocked` with the exact missing input.
+Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits and block phase advancement only while the missing proof is merge-critical. When the missing proof reaches the **Human Decision Boundary**, keep it `unresolved` and use disposition `blocked` with the exact missing input.
 
 Group candidates by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction may not have established the invariant. Reopen the root cause, determine the smallest sufficient correction from existing authority, and verify the required invariant across the supported input class.
 
@@ -169,12 +169,9 @@ If the reviewed head is stale, required evidence is absent, or ungranted descend
 
 ### Merge Relevance
 
-For every candidate, record `Required for this PR: yes | no | unknown`. Use `yes` only when current-head evidence proves all of the following:
+For every candidate, record `Required for this PR: yes | no | unknown`. **Review Finding Validation** already proves authority, relevance and causality, a concrete trigger, and the expected result. Use `yes` only when current-head evidence also proves both of the following:
 
-- **Authority:** The behavior is mandatory under the ticket, a linked approved decision, or a pre-existing documented project contract applicable to the changed path.
-- **Failure without the fix:** Leaving the candidate unfixed prevents ticket acceptance, breaks the requested application behavior, or regresses an existing supported path.
-- **Causality:** The diff introduced the failure or makes the requested path depend on it.
-- **Known result:** Existing authority determines the required behavior and focused verification can distinguish it.
+- **Failure without the fix:** Leaving the candidate unfixed prevents ticket acceptance, breaks the requested application behavior, or regresses an existing supported fixed-point path established by repository evidence or a pre-existing material code contract.
 - **Proportional correction:** The proposed edit is the smallest sufficient correction. A stronger system or guarantee is not required merely because it may be useful.
 
 Inspect the relevant application flow, callers, tests, domain documentation, and fixed-point behavior before deciding. When the application can satisfy the ticket and preserve applicable existing behavior without the finding, use `no`. A confirmed `no` becomes a prioritized follow-up when it remains worth considering. Use `unknown` while evidence is incomplete; it blocks delivery only when the missing proof prevents establishing ticket acceptance or safe supported behavior.
@@ -220,6 +217,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting ordinary in-scope fixes inside the same hosted-review phase.
+Tell it to apply **Review Finding Validation**, **Merge Relevance**, and **Review Finding Disposition** to every hosted candidate before authorizing a fixer. Keep `fix-now` work inside `codex-pr-review`; retain hosted follow-ups and nonblocking investigations for the conductor handoff without editing them.
 
 A **hosted review checkpoint** is one of:
 
@@ -251,7 +249,7 @@ Complete when, from a hosted review checkpoint, `codex-pr-review` validates the 
 
 ### 7. Check Final Scope Fit
 
-After `codex-pr-review` validates the PR, spawn a fresh worker with the ticket, linked PRD or spec, fixed point, and full PR diff.
+After `codex-pr-review` validates the PR, spawn a fresh worker with the references required by **Reference Context** and tell it to inspect the full PR diff.
 Ask whether the diff is the smallest coherent implementation of the requested outcome.
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
@@ -281,7 +279,7 @@ Complete when the worker reports that the final diff fits the ticket, its prescr
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, PR URL, local and hosted Codex outcomes, review-cycle freshness boundary and ledger closure, final scope-fit result and corrections, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner. It also includes these prioritized sections with comment and commit links: `Required for merge` and why each item was mandatory; `Completed fixes`; `Follow-up candidates` ordered high, medium, then low with expected value and why each was deferred; `Not actionable` with concise evidence; `Unresolved blockers`; and `Acceptance evidence` mapping ticket criteria to implementation and verification.
+The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, PR URL, local and hosted Codex outcomes, review-cycle freshness boundary and ledger closure, final scope-fit result and corrections, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner. It also includes these prioritized sections with comment and commit links: `Required for merge` and why each item was mandatory; `Completed fixes`; `Follow-up candidates` and `Follow-up investigations` ordered high, medium, then low with expected value and why each was deferred; `Not actionable` with concise evidence; `Unresolved blockers`; and `Acceptance evidence` mapping ticket criteria to implementation and verification.
 
 ## PR Cleanup
 

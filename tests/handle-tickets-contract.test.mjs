@@ -35,4 +35,21 @@ test("handle-tickets uses references instead of duplicated authority", async () 
   assert.match(skill, /## Reference Context/u);
   assert.match(skill, /point agents to authority rather than reproducing it/u);
   assert.match(skill, /fix worker receives the finalized review comment URL/u);
+  assert.match(skill, /Spawn a worker with `implement` and the references required/u);
+  assert.match(skill, /Spawn a fresh worker with `code-review` and the references required/u);
+  assert.match(skill, /Spawn a fresh `codex-local-review` worker with the references required/u);
+  assert.match(skill, /spawn a fresh worker with the references required by \*\*Reference Context\*\*/u);
+  assert.doesNotMatch(
+    skill,
+    /linked PRD context when present|linked PRD or spec context when present|linked PRD or spec, fixed point, and full PR diff/u,
+  );
+});
+
+test("handle-tickets applies merge relevance to hosted findings", async () => {
+  const skill = await readFile(skillUrl, "utf8");
+
+  assert.match(
+    skill,
+    /apply \*\*Review Finding Validation\*\*, \*\*Merge Relevance\*\*, and \*\*Review Finding Disposition\*\* to every hosted candidate/u,
+  );
 });
