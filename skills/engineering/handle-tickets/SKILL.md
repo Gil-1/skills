@@ -15,41 +15,57 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 - The orchestrator assigns each ticket exactly one active worktree and branch through PR Cleanup and at most one live **ticket conductor**, recording its task ID. Before spawning a conductor, it checks the ticket's assignment and resumes or waits for a live conductor instead of spawning another; any conductor replacement inherits the active assignment and current implementation packet path when present. Replacing the assignment requires explicit user approval; close any open PR tied to the prior branch, invalidate its branch-bound evidence, atomically record the replacement assignment and PR plan, and resume at **Prepare the Worktree**. Record the replacement PR URL before any PR-dependent phase and rebind its Merge Lane when present.
 - Worktree paths follow the repository's convention when present. Otherwise, the orchestrator places each worktree beside the main worktree as `<repository-name>-ticket-<ticket-id>`.
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
-- Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. Before any push to a ready PR, the pushing agent captures the current UTC timestamp as the review-cycle freshness boundary and carries it to **Ready PR and Run Codex PR Review**.
+- Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. For hosted review, obtain and carry `expectedHeadRefOid` and `statusFreshAfter` exactly as `codex-pr-review` defines them.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
 - Every conductor and worker spawn prompt ends with this exact footer:
 
   ```text
   Skills allowed: <workflow skill names or none>
-  Delegation: <none or exact delegated roles>
+  Delegation allowed: <none or exact delegated roles>
   ```
 
-  A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` Direct fix workers receive `Skills allowed: none` unless their grant names a skill. The `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback batch and puts the same contract in each fixer prompt. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
-- Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: ordinary hosted fixes remain inside `codex-pr-review`, a prescribed scope correction follows the correction path in **Check Final Scope Fit**, and a purely mechanical Merge Lane refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
+  A phase worker with no delegation grant is told: `Complete this lane directly. Do not call task or spawn agents. Load only the workflow skills named in Skills allowed. Return evidence, questions, and blockers to your parent.` Direct fix workers receive `Skills allowed: none` unless their grant names a skill. The `implement` worker receives a grant for the `code-review` coordinator required by its skill. Each `code-review` coordinator receives a grant for exactly its Standards and Spec leaves and puts that zero-delegation contract in both leaf prompts. The `codex-pr-review` orchestrator receives a grant for one fixer per feedback or aggregate-check review-fix batch and puts that zero-delegation contract in each fixer prompt. Evidence obtained through an ungranted descendant is not phase evidence until an authorized worker re-establishes it directly.
+- Review and delivery evidence is bound to the exact branch head it validated. A later implementation commit invalidates evidence for the earlier head unless an existing phase explicitly owns its replacement: hosted review fixes remain inside `codex-pr-review`, a prescribed scope correction follows **Check Final Scope Fit**, and a mechanical integration refresh may carry its `Delivery checkpoint`. Never report evidence from an earlier head as current.
 - Every role handoff ends with this exact footer:
 
   ```text
   Skills loaded: <none or verified skill provenance>
-  Delegation: <none or direct child task IDs and roles>
+  Children spawned: <none or direct child task IDs and roles>
   ```
 
-  Each coordinator lists its direct child task IDs and roles; each leaf or fixer states `Delegation: none`. Parents verify both fields against the role's grant before accepting its handoff. Missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. For each loaded skill, provenance includes its name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Aggregate verified provenance without creating another manifest.
+  Each coordinator lists its direct child task IDs and roles; each leaf or fixer states `Children spawned: none`. Parents verify the receipt against the role's grant before accepting its handoff. Missing, mismatched, or disallowed entries invalidate its evidence until an authorized role re-establishes it. For each loaded skill, provenance includes its name and resolved base path plus matching standard-lock `source`, `skillPath`, and `skillFolderHash` when available. Aggregate verified provenance without creating another manifest.
 
 ## Ticket Completion
 
-A ticket is complete only when its PR is merge-ready or a targeted blocker reaches the **Human Decision Boundary** below. Merge-ready means all `code-review` blockers are resolved, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. A Codex watcher timeout remains a conductor-owned checkpoint only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
+A ticket is complete only when its PR is merge-ready or a targeted blocker reaches the **Human Decision Boundary** below. Merge-ready means every `fix-now` finding is resolved, no `investigate` or `blocked` finding remains, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. Follow-ups do not block completion. Every unsuccessful `codex-pr-review` outcome retains its continuation packet. A watcher timeout remains resumable without becoming a targeted blocker only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
 
 By default, stop at `merge-ready`. Do not treat this workflow alone as authorization to merge a PR or enable auto-merge.
 
 ## Human Decision Boundary
 
-Keep delivery autonomous while approved repository authority and available evidence determine a safe in-scope next action. A **Human Decision Boundary** exists only when approved sources do not determine required product behavior, contract, scope, or ownership; required external authority, access, review, or merge action is missing; or proceeding necessarily changes an approved decision. Complexity, diff size, cross-cutting work, repeated failure, and technical uncertainty that code, tests, or focused experiments can resolve do not cross this boundary. Investigate, plan, implement, and verify autonomously until the issue is resolved or the boundary is proven; every targeted question identifies the exact missing input and why the repository cannot supply it.
+Keep delivery autonomous while requirement sources and evidence determine a safe in-scope next action. A **Human Decision Boundary** exists only when they do not determine required product behavior, contract, scope, or ownership; required approval, access, review, or merge action is missing; or proceeding necessarily changes an approved decision. Complexity, diff size, cross-cutting work, repeated failure, and technical uncertainty that code, tests, or focused experiments can resolve do not cross this boundary. Investigate, plan, implement, and verify autonomously until the issue is resolved or the boundary is proven; every targeted question identifies the exact missing input and why the repository cannot supply it.
+
+## PR Comment Policy
+
+Workflow outcome comments form an append-only record of completed evidence and decisions. The workflow contributes them at the completed phase points defined below. Referenced skills retain ownership of their operational control comments and review-thread replies. A completed record that later proves inaccurate receives a concise correction linking to it.
+
+A **Code Review** phase cycle contributes one finalized comment after finding validation and disposition; its resulting commit is the visible fix receipt. Other phase comments record a completed review outcome, a blocker requiring external action, a finalized integration result, or a delivery checkpoint.
+
+Use source URLs, repository paths, commit SHAs, and prior comment URLs as references instead of copying content that already has a canonical home. A successor comment links its immediate predecessor so a fresh agent can traverse the decision history on demand.
+
+A **checkpoint** is a current, head-bound outcome record that authorizes a later transition. A **continuation packet** records resumable state and is not validation evidence.
+
+## Worker Context
+
+Worker prompts carry references discovered during **Gather Context** rather than copied source content. Pass the ticket URL, worktree, branch, fixed point, and current `Head`, plus the PR URL once it exists. Tell each worker to follow repository instructions, including the project's domain-doc consumer rules, and consult the domain context and decisions relevant to its phase. Add another direct URL or path only when it materially governs the work and is not already discoverable through those sources. A fix worker receives the reviewer handoff and the conductor's finalized `fix-now` dispositions; use durable URLs or paths when available and include source content only when no durable reference exists.
+
+For a renewal review, pass the immediately previous code-review comment URL and tell the coordinator to inspect earlier workflow comments when a finding repeats a prior family. Prior review dispositions are context, not requirement sources: reopen one when new current-head evidence changes its validity or **Delivery Scope**, including a regression, an incomplete correction, or newly applicable requirements.
 
 ## Orchestrator Loop
 
 ### 1. Gather Context
 
-Read each ticket body and relevant comments, the linked PRD or spec when present, repo instructions, base branch, and external-action limits.
+Read each ticket body and relevant comments, follow the specs and decisions it links, then read repository instructions, the base branch, and external-action limits. Follow the project's domain-doc consumer rules to identify its context map, glossary, and decisions; survey what exists and read the material relevant to ticket readiness and queue decisions.
 
 Complete when every ticket is marked `ready-for-agent` or the repo's equivalent, excluded, or blocked with a targeted question.
 
@@ -80,7 +96,7 @@ When the ticket orchestrator confirms that a PR is merged, run the **confirmed-m
 
 - Run PR Cleanup.
 - Resume newly unblocked ticket delivery.
-- Advance its Merge Lane by one candidate.
+- Advance its Merge Lane by one merge candidate.
 - Before starting a ticket that depended on the merged PR:
   1. Update the default branch to its latest remote commit.
   2. Confirm that the updated default branch includes the merge.
@@ -90,18 +106,18 @@ Complete when the merge decision is returned and every required **confirmed-merg
 
 ## Merge Lane
 
-When open PRs have required merge orders, the orchestrator runs one serial **merge lane** per ordered chain alongside parallel ticket delivery. Each lane has one active merge candidate. Independent lanes and unordered merge candidates may progress in parallel. Merge-ready PRs waiting behind an active candidate remain parked at their delivery checkpoint, while implementation and fixes on other tickets continue through their conductors.
+When open PRs have required merge orders, the orchestrator runs one serial **merge lane** per ordered chain alongside parallel ticket delivery. Each lane has one active merge candidate. Independent lanes and unordered merge candidates may progress in parallel. Merge-ready PRs waiting behind an active merge candidate remain parked at their Delivery checkpoint, while implementation and fixes on other tickets continue through their conductors.
 
-The latest workflow-owned PR comment labeled `Delivery checkpoint` after a successful delivery or integration outcome is the PR's **delivery checkpoint**. It represents the conductor's completed outcome as one opaque result. A checkpoint is current when it follows the latest branch update in the PR timeline. The orchestrator reads the checkpoint and current mergeability, then tells the conductor whether to continue delivery, prepare the active candidate, or perform an integration refresh.
+A **Delivery checkpoint** is a Merge Lane-only checkpoint that allows a successfully delivered PR to be parked. It records `Head: <full SHA>` and links its hosted-review input, checks, hosted validation, and applicable scope-fit outcome. It is current when its recorded Head equals the branch Head, and it does not establish merge readiness without current clean mergeability. The orchestrator reads both, then tells the conductor whether to continue delivery, prepare the active merge candidate, or perform an integration refresh.
 
-A parked PR is evaluated when it becomes the active merge candidate. A current checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**. The conductor delegates the integration and conflict reconciliation, then classifies the result before selecting the next phase:
+A parked PR is evaluated when it becomes the active merge candidate. A current Delivery checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**. The conductor delegates the integration and conflict reconciliation, then classifies the result before selecting the next phase:
 
-- A **mechanical integration** changes only ancestry and conflict-free combination. Wait for the automatically started checks, run `codex-pr-review` using the carried `Delivery checkpoint`, and renew that checkpoint with the previous scope-fit result after successful hosted validation.
-- A **substantive integration** requires semantic conflict choices or branch-authored code, test, or documentation changes. Record the integrated base full SHA as the replacement fixed point, invalidate the carried checkpoint, and resume at **Code Review**, followed by Local Codex, hosted Codex, and final scope fit.
+- A **mechanical integration refresh** changes only ancestry and conflict-free combination. Wait for the automatically started checks, run `codex-pr-review` using the carried `Delivery checkpoint`, and renew that checkpoint by linking the still-applicable scope-fit outcome after successful hosted validation.
+- A **substantive integration refresh** requires semantic conflict choices or branch-authored code, test, or documentation changes. Record the integrated base full SHA as the replacement fixed point, invalidate the carried checkpoint, and resume at **Code Review**, followed by Local Codex, hosted Codex, and final scope fit.
 
-When a previously merge-ready PR enters an integration refresh, immediately post or update one workflow-owned PR comment whose first line is exactly `## Delivery status`. Record the current full head SHA, prior checkpoint head, new base, reason for refresh, and current phase. After classification, update the same comment with the current full head SHA, `mechanical` or `substantive`, the invalidated checkpoints, and the next required phase. Keep updating that comment at phase transitions and after branch updates; do not number it or create renewal status comments.
+When a previously merge-ready PR enters an integration refresh, classify it, then record the completed outcome as `## Integration refresh` with `Head`, prior checkpoint Head, new base, reason, `Classification: mechanical integration refresh | substantive integration refresh`, invalidated checkpoints, and next required phase. Later phases contribute their completed outcomes through the ordinary comments defined below.
 
-The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
+The merge lane advances after the active merge candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active merge candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next merge candidate and evaluates its current mergeability.
 
 ## Ticket Conductor Loop
 
@@ -118,144 +134,163 @@ Complete when `git status --short` is known and the branch contains only the tic
 
 Before spawning implementation, decide whether the ticket and linked spec already provide enough implementation context. If a concrete unanswered design, ownership, compatibility, or verification question would materially risk the implementation, the conductor allocates a unique ticket-owned temporary path readable from the assigned worktree, using an ignored repository scratch or temp location when available and otherwise a shared path outside the repository, then passes it to one direct analysis worker. The worker leaves the intended diff unchanged, writes the **implementation handoff packet** atomically to that path, finishes it with `## Packet complete`, and returns the path. The conductor verifies the readable file and completion marker, then records the path with the orchestrator immediately. Skip this analysis when existing artifacts already answer the question.
 
-The packet has no length limit. Preserve every implementation-relevant fact not already captured in referenced authoritative artifacts, including corrections or decisions about root cause, selected design, mistake-preventing rejected directions, invariants, scope, ownership, compatibility, verification, unresolved questions, and operational state. Exclude raw investigation logs and repeated source content; reference existing issues, specs, ADRs, commits, diffs, files, and URLs instead. Redact sensitive information.
+The packet has no length limit. Preserve every implementation-relevant fact not already captured in referenced requirement sources, including corrections or decisions about root cause, selected design, mistake-preventing rejected directions, invariants, scope, ownership, compatibility, verification, unresolved questions, and operational state. Exclude raw investigation logs and repeated source content; reference existing issues, specs, ADRs, commits, diffs, files, and URLs instead. Redact sensitive information.
 
-If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
+If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket and linked approved specs or decisions remain requirement sources, while the fixed point, diff, and packet are evidence or context under review. Promote any approved design or scope decision reviewers need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
 
-Spawn a worker with `implement`, the ticket, linked PRD context when present, implementation packet path when present, assigned worktree and branch, and verification expectations.
-Explicitly tell it to implement, run checks, commit, and hand off without running `/code-review`.
+Spawn a worker with `implement` and the references required by **Worker Context**, plus the implementation packet path when present and verification expectations.
+Tell it to follow `implement` through completion and return its handoff.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
+Apply **Review Finding Disposition** to findings from the embedded review. Apply any `fix-now` findings as one conductor-owned review fix with focused verification and a commit. Then enter **Code Review** with a fresh coordinator on the resulting head whether the embedded review reported findings or not.
 
 Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned, or a targeted implementation blocker is returned with evidence.
 
 ### 3. Code Review
 
-Spawn a fresh worker with `code-review`, the ticket, linked PRD or spec context when present, assigned worktree and branch, and the fixed point to review from.
-Tell it that documentation added or strengthened by the diff is implementation under review and cannot expand the ticket.
-When it promises more than the ticket requires, recommend narrowing the documentation.
-Tell the coordinator to apply the delegation contract above and report every finding as a candidate with the reviewed full head SHA, governing authority, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, and focused verification.
-Post or update one workflow-owned PR comment whose first line is exactly `## Code review` when the tracker supports PR comments. After the candidate report, include `Head`, `Cycle: initial | renewal | integration`, and mark each candidate as pending validation. After conductor validation and disposition, update that same comment with the current findings and dispositions. Replace the prior current-state report instead of creating numbered renewal comments.
+Spawn a fresh worker with `code-review` and the references required by **Worker Context**.
+Treat documentation added or strengthened by the diff as implementation under review against the ticket's requirement sources. Narrow promises beyond what the ticket requires.
+Tell the coordinator to apply the delegation contract above and report every finding with the reviewed full head SHA, requirement source, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, focused verification, and smallest sufficient correction.
+After the conductor validates and dispositions every finding, record the finalized cycle as `## Code review`. Include `Head`, `Fixed point`, `Cycle: <number> (initial | renewal | integration)`, the previous review comment URL when one exists, and the intervening review-fix commit when one exists. Record each finding's validity, applicable delivery requirement and disposition, requirement source, evidence, and correction or follow-up priority.
 
-Complete when the report pins the reviewed head and provides enough evidence to validate every candidate finding, including blockers, missing implementation, and fix recommendations.
+Complete when the report pins the reviewed head and provides enough evidence to validate every finding and decide whether it is required for this delivery, including blockers, scope omissions, and smallest sufficient corrections.
 
 ### Review Finding Validation
 
-A review finding is a **candidate**, not edit authority. The conductor validates candidates autonomously before scope disposition. A candidate is `confirmed` only when current-head evidence establishes all of the following:
+A review report contains **findings**, not edit instructions. The conductor validates each finding autonomously. A finding is `confirmed` only when current-head evidence establishes all of the following:
 
-- **Authority:** the required behavior comes from the original ticket, a linked approved spec or decision, a pre-existing applicable repository standard, or a pre-existing material code contract applicable to the changed code. Documentation changed by the reviewed diff and implementation packets are not review authority.
+- **Requirement source:** the required behavior comes from the original ticket, a linked approved spec or decision, a pre-existing applicable repository standard, or a pre-existing material code contract applicable to the changed code. Documentation changed by the reviewed diff and implementation packets remain evidence under review.
 - **Relevance:** identify whether the diff introduced the defect, omitted required behavior, or makes a changed execution path depend on it. Cite the changed location or complete causal path. A concrete defect without that causal path is adjacent to this ticket and cannot authorize an in-scope fix.
 - **Trigger:** a focused reproducer, failing test, reachable execution path, or direct static proof demonstrates the current behavior. Inspect relevant guards, callers, tests, and counterevidence; a merely conceivable bypass or architecture preference is not enough.
-- **Expected result:** authoritative sources determine the required outcome, and a focused check can distinguish the corrected behavior from the current one.
+- **Expected result:** requirement sources determine the required outcome, and a focused check can distinguish the corrected behavior from the current one.
 
-Mark a candidate `rejected` when evidence disproves it or shows it is stale, based on non-authoritative promises, unreachable, duplicate, or preference-only. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve `unresolved` candidates with read-only investigation or one direct nondelegating analysis worker; they do not authorize edits or phase advancement. When the missing proof reaches the **Human Decision Boundary**, keep it `unresolved` and use disposition `blocked` with the exact missing input.
+Mark a finding `rejected` when evidence disproves it or shows it is stale, based on unsupported promises, unreachable behavior, duplication, or preference alone. Its disproving evidence completes the finding; it receives no delivery requirement or disposition. Mark it `unresolved` when it remains plausible but lacks one of the proofs above. Resolve unresolved findings with read-only investigation or one direct nondelegating analysis worker. When missing proof prevents establishing ticket acceptance or supported behavior and reaches the **Human Decision Boundary**, use disposition `blocked` with the exact missing input.
 
-Group candidates by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction did not establish the invariant, not authority for another isolated patch. Reopen the root cause, determine the smallest robust correction from existing authority, and verify the invariant across the supported input class. When that correction is large or cross-cutting but remains inside approved behavior and ownership, plan and implement it autonomously.
+Group findings by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction may not have established the invariant. Reopen the root cause, determine the smallest sufficient correction from requirement sources, and verify the required invariant across the supported input class.
 
-If the reviewed head is stale, required evidence is absent, or ungranted descendants contributed the finding, do not accept the candidate from that report. Re-establish it on the current head through an authorized direct worker. A confirmed finding may still be out of scope or require a human decision; validity and edit authority remain separate.
+Re-establish a finding on the current head through an authorized direct worker when its reviewed head is stale, required evidence is absent, or ungranted descendants contributed it. Validity, delivery requirement, and disposition remain separate.
+
+### Delivery Scope
+
+For every confirmed or unresolved finding, record `Required for this delivery: yes | no | unknown`. **Review Finding Validation** already establishes its available requirement source, relevance and causality, trigger evidence, and expected result. Use `yes` when leaving the finding unresolved would violate acceptance criteria, requested application behavior, or supported behavior on the changed path, and correcting it is part of the smallest coherent implementation of the approved ticket. Inspect the relevant application flow, callers, tests, domain documentation, and fixed-point behavior before deciding.
+
+Use `no` when the application can satisfy the ticket and preserve applicable existing behavior without resolving the finding. Use `unknown` while missing evidence prevents establishing ticket acceptance or preservation of supported behavior on the changed path.
+
+Leaving a `yes` finding unresolved is **scope omission**. Implementing a `no` finding without separate approval is **scope creep**.
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex candidate, apply **Review Finding Validation** before deciding edit authority. Record exactly `Validity: confirmed | rejected | unresolved` and `Disposition: fix | not-actionable | out-of-scope | blocked | investigate`; allowed pairs are `confirmed` with `fix`, `out-of-scope`, or `blocked`; `rejected` with `not-actionable`; and `unresolved` with `investigate` or `blocked`. Map `rejected` candidates to `not-actionable` with evidence. Keep `unresolved` candidates in autonomous investigation without editing, or use `blocked` only at the **Human Decision Boundary**. Classify a `confirmed` candidate with a causal path to the ticket as `fix` or `blocked`; classify a confirmed concrete defect without that path as `out-of-scope`. Severity controls ordering and urgency, not validity or edit authority.
+Apply **Review Finding Validation** and **Delivery Scope** before deciding disposition. Every finding records:
 
-- Use `fix` without asking for a confirmed finding when approved authority determines the intended result, the correction remains inside the approved ticket and owner boundary, and a focused verification path exists. A small, local, reversible correction is ready for the ordinary scoped fix batch. Before a large, cross-cutting, or repeated-family correction, use read-only root-cause analysis to record the robust design, affected responsibilities, and verification for one coherent fix batch.
-- Classify a confirmed finding as `blocked` and return the smallest targeted decision question only at the **Human Decision Boundary**.
-- Use `not-actionable` with evidence for findings that are disproven, stale, intentional, duplicate, or speculative. Use `out-of-scope` with a no-fix rationale for a concrete adjacent issue that does not affect the current PR's safety; return a targeted decision at the **Human Decision Boundary** when current delivery requires scope expansion or follow-up action.
-- Apply independent `fix` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, why they are unsafe to auto-fix, the smallest concrete options, a recommendation, and whether delivery can continue independently.
+- `Validity: confirmed | rejected | unresolved`
 
-Do not broaden implementation solely to satisfy documentation added or strengthened by the diff. Use `diagnosing-bugs` for complex or important bugs.
+Every non-rejected finding also records:
+
+- `Required for this delivery: yes | no | unknown`
+- `Disposition: fix-now | follow-up | investigate | blocked`
+
+Map the evidence to a disposition:
+
+- `confirmed` + `yes` -> `fix-now`, or `blocked` at the **Human Decision Boundary**.
+- `unresolved` + `yes` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
+- `confirmed` + `no` -> `follow-up`.
+- `unresolved` + `no` -> `follow-up`.
+- `confirmed` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
+- `unresolved` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
+
+A `follow-up` records `Priority: high | medium | low`, expected value, evidence, why delivery can proceed without it, and its next action. An `investigate` disposition blocks phase completion while autonomous evidence gathering continues.
+
+Send `fix-now` findings to a worker. Preserve follow-ups in the final handoff; their implementation or publication as tracker tickets requires separate approval. Severity controls urgency within a disposition, not validity, delivery requirement, or disposition.
+Apply independent `fix-now` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, exact missing input, a recommendation, and whether delivery can continue independently.
+
+Use `diagnosing-bugs` for complex or important bugs.
 
 ### 4. Fix Code Review
 
-A **code-review cycle** is one two-axis report, one complete finding-validation and disposition set, and at most one scoped fix batch. Apply **Review Finding Validation** and **Review Finding Disposition** to the report.
+A **Code Review** phase cycle is one two-axis report, one complete finding-validation and disposition set, and at most one review-fix batch. Apply **Review Finding Disposition** to the report.
 
-When no confirmed finding is `fix`, skip the worker and checks; return any blocker, continue autonomous investigation for any unresolved candidate, otherwise advance to **Local Codex Review/Fix**.
+When no finding is `fix-now`, return a blocker, continue an `investigate` finding, or retain follow-ups for the final handoff and advance to **Local Codex Review/Fix**.
 
-Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require explicit current-head validation and disposition before returning it or clearing it. Run another current-head code-review cycle after the fix. Continue without a numeric review limit while review discovers confirmed in-scope findings that require correction; reject or investigate unsupported candidates instead of editing for them. When no blocker, confirmed fix, or unresolved candidate remains, advance to **Local Codex Review/Fix**. Rerun aggregate checks after later code changes.
+Otherwise, the fix worker runs focused checks and commits the review-fix batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent batch, carry it into another Code Review phase cycle and require explicit current-head validation and disposition before returning or clearing it. Run another current-head cycle after the review fix. Continue without a numeric review limit while current-head evidence discovers `fix-now` findings; preserve follow-ups for the final handoff. Rerun aggregate checks after later code changes.
 
-Complete when every candidate has a current-head validation result and resulting disposition, and either a blocker is returned or all of these hold: no candidate remains unresolved, no `fix` disposition remains unapplied, and any committed fixes pass focused and aggregate checks.
+Complete when every finding has a current-head validity, every non-rejected finding has a delivery requirement and disposition, and either a blocker is returned or no `fix-now`, `investigate`, or `blocked` finding remains and committed review fixes pass focused and aggregate checks. Follow-ups remain recorded for the final handoff.
 
 ### 5. Local Codex Review/Fix
 
-Spawn a fresh `codex-local-review` worker with the ticket, linked PRD or spec context when present, assigned worktree, and base.
-Apply **Review Finding Disposition** to each report. For `fix` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix` findings to apply first, return the blocker. When no confirmed in-scope findings remain and no candidate is unresolved, the conductor runs aggregate checks once.
-If aggregate checks fail, diagnose the failure. If the current ticket caused it and existing authority determines a repair inside approved scope, spawn one worker for one coherent repair batch, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks again. Continue diagnosis, repair, fresh review, and aggregate verification until they pass or reach the **Human Decision Boundary**.
-After a successful local Codex outcome, confirm the local, remote, and PR heads match, then post or update one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. This is the current **local Codex checkpoint**.
+Spawn a fresh `codex-local-review` worker with the references required by **Worker Context**.
+Apply **Review Finding Disposition** to each report. Apply `fix-now` findings as one review fix with focused checks and a commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix-now` findings to apply first, return the blocker. When no `fix-now` or `investigate` finding remains, the conductor runs aggregate checks once.
+If aggregate checks fail, diagnose the failure. If the current ticket caused it and requirement sources determine an in-scope review fix, spawn one worker to apply a coherent review-fix batch with focused checks and a commit, then repeat local Codex review on the changed head before running aggregate checks again. Continue until checks pass or the **Human Decision Boundary** is reached.
+After a successful local Codex outcome, confirm the local, remote, and PR heads match. Record the outcome as `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`; the latest such outcome on that head is the current **local Codex checkpoint**.
 
-Complete when no confirmed in-scope findings or unresolved candidates remain, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence.
+Complete when no `fix-now`, `investigate`, or `blocked` finding remains, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence. Preserve follow-ups for the final handoff.
 
 ### 6. Ready PR and Run Codex PR Review
 
-Spawn a PR worker to perform this sequence:
+A **hosted-review input** is either a current local Codex checkpoint or, for a mechanical integration refresh, the carried pre-refresh Delivery checkpoint.
+
+Spawn a PR worker with that input to perform this sequence:
 
 1. Confirm local `HEAD` matches the remote full head SHA.
-2. For a ready PR, use the freshness boundary captured immediately before the latest push; otherwise, capture the current UTC timestamp.
-3. Mark the PR ready for review if it is still a draft.
-4. Run `codex-pr-review` with that review-cycle freshness boundary and expected head.
+2. Mark the PR ready for review if it is still a draft.
+3. Run or resume `codex-pr-review`, obtaining and carrying `expectedHeadRefOid` and `statusFreshAfter` exactly as that skill defines them.
 
-Carry both values across resumptions.
-Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting ordinary in-scope fixes inside the same hosted-review phase.
+Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting hosted review fixes inside the same phase.
+For this caller, tell the PR worker to return every hosted finding to the conductor before authorizing a fixer. The conductor applies **Review Finding Disposition**, then resumes the same PR worker with only finalized `fix-now` findings authorized. `codex-pr-review` owns hosted review fixes, verification, pushes, continuation packets, and ledger closure; retain hosted follow-ups for the conductor handoff.
 
-A **hosted review checkpoint** is one of:
+Use the hosted-review input and resulting Head to choose the caller transition:
 
-- A current local Codex checkpoint.
-- For a purely mechanical Merge Lane integration refresh, the pre-refresh `Delivery checkpoint` carried through that refresh.
+- `Local Codex checkpoint / normal entry`: run the normal ready-PR sequence above.
+- `Local Codex checkpoint / hosted review fix that is not a scope correction changes Head`: keep the fix and repeated hosted validation inside `codex-pr-review`.
+- `Local Codex checkpoint / scope correction changes Head`: return to **Local Codex Review/Fix** before hosted validation resumes.
+- `Returned Local Codex / Head changed`: re-enter this phase through the normal ready-PR sequence and refresh the hosted inputs as `codex-pr-review` requires.
+- `Returned Local Codex / Head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged `expectedHeadRefOid`.
+- `Carried Delivery checkpoint / no hosted review fix changes implementation`: keep the integration refresh mechanical and renew the Delivery checkpoint by linking the still-applicable scope-fit outcome.
+- `Carried Delivery checkpoint / a hosted review fix changes implementation`: classify it as a substantive integration refresh, rebind the fixed point to the integrated base full SHA, invalidate the carried checkpoint, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before recording a new Delivery checkpoint.
 
-Use the checkpoint type and resulting head to choose the hosted-review transition:
+If aggregate checks fail after a hosted review fix, return the failure to the same PR worker. When the ticket caused it and requirement sources determine an in-scope review fix, authorize that worker to delegate one coherent review-fix batch with focused checks and a commit, then resume `codex-pr-review` on the changed Head. Continue until checks pass or the **Human Decision Boundary** is reached.
 
-- `Local Codex checkpoint / normal entry`: run the normal ready-PR sequence above with its expected head and review-cycle freshness boundary.
-- `Local Codex checkpoint / ordinary in-scope hosted fix changes the head`: keep the fix and repeated hosted validation inside `codex-pr-review`.
-- `Local Codex checkpoint / scope-changing commit changes the head`: return to **Local Codex Review/Fix** before hosted validation resumes; this includes a scope reduction or correction.
-- `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
-- `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
-- `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
-- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, rebind the fixed point to the integrated base full SHA, invalidate the carried scope-fit and delivery evidence, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before posting a new `Delivery checkpoint`.
-
-If aggregate checks fail after a hosted fixer push, diagnose them and run one coherent scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. Continue diagnosis, repair, and hosted validation while existing authority determines an in-scope correction; return a targeted blocker only at the **Human Decision Boundary**.
-
-If the PR worker times out while PR-body Codex status remains `reviewing`:
-
-- Treat its continuation packet as a checkpoint.
-- Re-inspect the PR.
-- Resume `codex-pr-review` on the same head.
-- Use the conductor's resume instruction as new input for the next bounded review run.
-
-Return silent-start Codex `unavailable`/`disabled`/`stuck` outcomes and GitHub or access failures as targeted blockers.
-
-Complete when, from a hosted review checkpoint, `codex-pr-review` validates the final current head, reports Review Ledger Closure complete with zero unresolved Codex-authored threads, relevant aggregate checks pass on that head after any hosted fixer or repair commit, and every scope-changing commit was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
+Before deciding whether to resume from a continuation packet, re-inspect external Codex state with its `expectedHeadRefOid` and `statusFreshAfter`. If the PR-body status remains `reviewing`, resume the same PR worker only when the conductor supplies the packet's required new input. If it has advanced to `approval` or `feedback`, resume or re-enter the same PR worker to process any feedback and complete Review Ledger Closure; apply the new-input guard only when the state is unchanged `reviewing`. Return every other unsuccessful terminal outcome as a targeted blocker with its continuation packet. Complete when `codex-pr-review` returns ledger-closed validation for the final Head, relevant aggregate checks pass on that Head after hosted review fixes, and every scope correction was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
 
 ### 7. Check Final Scope Fit
 
-After `codex-pr-review` validates the PR, spawn a fresh worker with the ticket, linked PRD or spec, fixed point, and full PR diff.
+After `codex-pr-review` validates the PR, spawn a fresh worker with the references required by **Worker Context** and tell it to inspect the full PR diff.
 Ask whether the diff is the smallest coherent implementation of the requested outcome.
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
 
-Have the conductor post a dedicated workflow-owned PR comment whose first line is exactly `## Scope fit`.
-On success, include only `PASS` after the heading.
-On failure, include `FAIL` followed by concise findings explaining why.
-Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
+Record every scope-fit outcome as `## Scope fit` with `Head: <full SHA>` for the full PR diff it reviewed. An initial or rerun success contains `PASS`; a failure contains `FAIL` followed by concise scope-fit findings.
 
-If the PR needs an authority-determined in-scope correction:
+If the PR needs a scope correction determined by requirement sources:
 
-1. Treat a small, local, reversible correction with a known result as **prescribed**. Treat every other correction as **substantive** and apply the root-cause analysis required by **Review Finding Disposition** before editing.
-2. Spawn a fix worker to apply the correction without dropping required behavior.
+1. Apply **Review Finding Disposition** to every scope-fit finding before classifying a `fix-now` scope correction as prescribed or diagnosed. Only a `fix-now` finding authorizes a correction. Treat a small, local, reversible correction with a known result as a **prescribed scope correction**. For every other `fix-now` correction, use `diagnosing-bugs` before editing to establish and record the root cause, affected responsibilities, smallest coherent correction, and focused verification as a **diagnosed scope correction**.
+2. Spawn a fix worker with the finalized `fix-now` disposition and correction classification to apply the scope correction while preserving required behavior.
 3. Have the fix worker rerun relevant checks, commit, and push, then record the full correction head SHA.
 4. Return to **Local Codex Review/Fix** for a fresh local review.
 5. Run hosted validation through **Ready PR and Run Codex PR Review**.
-6. For a prescribed correction, do not repeat **Check Final Scope Fit** only when local and hosted validation leave the implementation head at the recorded correction SHA.
-7. Repeat **Check Final Scope Fit** after any later head change to a prescribed correction and after every substantive correction; update the existing workflow-owned scope-fit comment with the rerun result.
+6. A prescribed scope correction completes this phase when the conductor verifies it against the recorded scope-fit finding and fresh local and hosted validation leave the implementation head at the recorded correction SHA.
+7. Repeat **Check Final Scope Fit** after any later head change to a prescribed scope correction and after every diagnosed scope correction; record the rerun as a new scope-fit outcome.
 
-When the prescribed correction passes unchanged-head validation, update the existing scope-fit comment so only `PASS` remains after the heading.
+When the verified prescribed scope correction passes unchanged-head validation, record a new scope-fit outcome containing `PASS` after the heading and linking the prior failed scope-fit outcome.
 
-After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
+After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, record it after the latest branch update.
 
-If a targeted blocker prevented Codex validation, skip this check and return the blocker.
+A targeted blocker that prevents Codex validation ends this phase before the scope-fit review and returns the blocker.
 
-Complete when the worker reports that the final diff fits the ticket, its prescribed correction passes fresh local and hosted Codex validation on the recorded correction head, or a safe correction reaches the **Human Decision Boundary**.
+Complete when the worker reports that the final diff fits the ticket, the conductor verifies a prescribed scope correction against the recorded finding and fresh local and hosted Codex validation pass on its recorded head, or a scope correction reaches the **Human Decision Boundary**.
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, `code-review` report and fix result when needed, local Codex review/fix outcome, PR URL, Codex PR outcome with expected head, review-cycle freshness boundary, and review-ledger closure, final scope-fit result and any correction commits, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner.
+The conductor handoff contains:
+
+- `Outcome: merge-ready | blocked | queued`
+- Ticket, PR, worktree, branch, and current `Head`
+- Links to current review, check, local Codex, hosted Codex, and scope-fit evidence
+- `Acceptance evidence` mapping ticket criteria to implementation and verification
+- Outstanding findings grouped by `follow-up`, `investigate`, and `blocked`, with applicable priority, evidence, next action, and owner
+- The implementation packet path only while delivery is blocked or resumable
+- The active continuation packet or durable reference, including `expectedHeadRefOid` and `statusFreshAfter`, while hosted review is blocked or resumable
+- The next workflow action and owner
+
+Completed and rejected findings remain in linked outcome records when available; include them inline only when no durable reference exists. The required role-handoff footer carries verified skill provenance and child task IDs.
 
 ## PR Cleanup
 
