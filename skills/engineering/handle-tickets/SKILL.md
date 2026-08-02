@@ -9,7 +9,7 @@ Run this skill as the **ticket orchestrator** for existing implementation-ready 
 
 Referenced skills own phase mechanics. The ticket conductor owns worker scope, phase boundaries, sequencing, retries, and Ticket Completion.
 
-Use the configured `worker` subagent for implementation and conductor-owned fixes when available; otherwise use the runtime's usual subagent.
+Use the configured `worker` subagent for implementation and conductor-owned fixes when available.
 
 ## Command Chain
 
@@ -19,6 +19,7 @@ Use the configured `worker` subagent for implementation and conductor-owned fixe
 - Each conductor owns one ticket, its worktree, its branch, its worker sequence, and the quality of its ticket delivery until the ticket meets the completion rule below.
 - Keep the PR current by pushing every ticket commit to the assigned branch as soon as it is created or handed off. For hosted review, obtain and carry `expectedHeadRefOid` and `statusFreshAfter` exactly as `codex-pr-review` defines them.
 - Worker sub-agents report to the conductor; the conductor reports to the orchestrator.
+- When a saved task cannot be resumed, continue that role in a fresh task with its current **Worker Context** and latest handoff when available, and record the new task ID.
 - Every conductor and worker spawn prompt ends with this exact footer:
 
   ```text
