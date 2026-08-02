@@ -248,7 +248,7 @@ Use the hosted-review input and resulting Head to choose the caller transition:
 
 If aggregate checks fail after a hosted review fix, return the failure to the same PR worker. When the ticket caused it and requirement sources determine an in-scope review fix, authorize that worker to delegate one coherent review-fix batch with focused checks and a commit, then resume `codex-pr-review` on the changed Head. Continue until checks pass or the **Human Decision Boundary** is reached.
 
-Resume the same PR worker from a continuation packet only when PR-body status remains `reviewing` and the conductor supplies the packet's required new input. Return every other unsuccessful outcome as a targeted blocker with its continuation packet. Complete when `codex-pr-review` returns ledger-closed validation for the final Head, relevant aggregate checks pass on that Head after hosted review fixes, and every scope correction was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
+Before deciding whether to resume from a continuation packet, re-inspect external Codex state with its `expectedHeadRefOid` and `statusFreshAfter`. If the PR-body status remains `reviewing`, resume the same PR worker only when the conductor supplies the packet's required new input. If it has advanced to `approval` or `feedback`, resume or re-enter the same PR worker to process any feedback and complete Review Ledger Closure; apply the new-input guard only when the state is unchanged `reviewing`. Return every other unsuccessful terminal outcome as a targeted blocker with its continuation packet. Complete when `codex-pr-review` returns ledger-closed validation for the final Head, relevant aggregate checks pass on that Head after hosted review fixes, and every scope correction was followed by a new local Codex checkpoint before hosted validation resumed; or when a targeted blocker reaches the **Human Decision Boundary**.
 
 ### 7. Check Final Scope Fit
 
@@ -257,12 +257,12 @@ Ask whether the diff is the smallest coherent implementation of the requested ou
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
 
-Record the scope-fit outcome as `## Scope fit`. An initial success contains `PASS`; a failure contains `FAIL` followed by concise scope-fit findings.
+Record every scope-fit outcome as `## Scope fit` with `Head: <full SHA>` for the full PR diff it reviewed. An initial or rerun success contains `PASS`; a failure contains `FAIL` followed by concise scope-fit findings.
 
 If the PR needs a scope correction determined by requirement sources:
 
-1. Treat a small, local, reversible correction with a known result as a **prescribed scope correction**. For every other **diagnosed scope correction**, use `diagnosing-bugs` before editing to establish and record the root cause, affected responsibilities, smallest coherent correction, and focused verification, then apply **Review Finding Disposition**.
-2. Spawn a fix worker to apply the scope correction while preserving required behavior.
+1. Apply **Review Finding Disposition** to every scope-fit finding before classifying a `fix-now` scope correction as prescribed or diagnosed. Only a `fix-now` finding authorizes a correction. Treat a small, local, reversible correction with a known result as a **prescribed scope correction**. For every other `fix-now` correction, use `diagnosing-bugs` before editing to establish and record the root cause, affected responsibilities, smallest coherent correction, and focused verification as a **diagnosed scope correction**.
+2. Spawn a fix worker with the finalized `fix-now` disposition and correction classification to apply the scope correction while preserving required behavior.
 3. Have the fix worker rerun relevant checks, commit, and push, then record the full correction head SHA.
 4. Return to **Local Codex Review/Fix** for a fresh local review.
 5. Run hosted validation through **Ready PR and Run Codex PR Review**.
