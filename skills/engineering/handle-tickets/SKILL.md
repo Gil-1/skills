@@ -191,6 +191,8 @@ Map the evidence to a disposition:
 - `confirmed` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
 - `unresolved` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
 
+A nonblocking `investigate` disposition includes `Priority: high | medium | low`, expected value, evidence, and why delivery can proceed without resolving it.
+
 Send `fix-now` findings to a worker. Preserve follow-ups in the final handoff; their implementation or publication as tracker tickets requires separate authority. Severity controls urgency within a disposition, not validity, delivery requirement, or edit authority.
 Apply independent `fix-now` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, exact missing input, a recommendation, and whether delivery can continue independently.
 
@@ -267,7 +269,7 @@ Record the scope-fit outcome as `## Scope fit`. An initial success contains `PAS
 
 If the PR needs an authority-determined in-scope correction:
 
-1. Treat a small, local, reversible correction with a known result as **prescribed**. Treat every other correction as **substantive** and apply the root-cause analysis required by **Review Finding Disposition** before editing.
+1. Treat a small, local, reversible correction with a known result as **prescribed**. For every other **substantive** correction, use `diagnosing-bugs` before editing to establish and record the root cause, affected responsibilities, smallest coherent correction, and focused verification, then apply **Review Finding Disposition**.
 2. Spawn a fix worker to apply the correction while preserving required behavior.
 3. Have the fix worker rerun relevant checks, commit, and push, then record the full correction head SHA.
 4. Return to **Local Codex Review/Fix** for a fresh local review.
