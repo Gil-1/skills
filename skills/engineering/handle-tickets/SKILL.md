@@ -37,7 +37,7 @@ Referenced skills own phase mechanics. The ticket conductor owns worker scope, p
 
 ## Ticket Completion
 
-A ticket is complete only when its PR is merge-ready or a targeted blocker reaches the **Human Decision Boundary** below. Merge-ready means every finding required for the PR and every blocking investigation is resolved, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. Prioritized follow-ups do not block completion. A Codex watcher timeout remains a conductor-owned checkpoint only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
+A ticket is complete only when its PR is merge-ready or a targeted blocker reaches the **Human Decision Boundary** below. Merge-ready means every finding required for the delivery and every blocking investigation is resolved, the local Codex review/fix loop passes, relevant checks pass, `codex-pr-review` validates the PR, final scope fit passes, and the PR is cleanly mergeable. Prioritized follow-ups do not block completion. A Codex watcher timeout remains a conductor-owned checkpoint only while PR-body Codex status is `reviewing`; required human reviews, silent-start Codex `unavailable`/`disabled`/`stuck` outcomes, and GitHub or access failures are targeted blockers.
 
 By default, stop at `merge-ready`. Do not treat this workflow alone as authorization to merge a PR or enable auto-merge.
 
@@ -113,7 +113,7 @@ A parked PR is evaluated when it becomes the active merge candidate. A current c
 - A **mechanical integration** changes only ancestry and conflict-free combination. Wait for the automatically started checks, run `codex-pr-review` using the carried `Delivery checkpoint`, and renew that checkpoint with the previous scope-fit result after successful hosted validation.
 - A **substantive integration** requires semantic conflict choices or branch-authored code, test, or documentation changes. Record the integrated base full SHA as the replacement fixed point, invalidate the carried checkpoint, and resume at **Code Review**, followed by Local Codex, hosted Codex, and final scope fit.
 
-When a previously merge-ready PR enters an integration refresh, classify it before commenting. Then append one workflow-owned PR comment whose first line is exactly `## Integration refresh`, recording the current full head SHA, prior checkpoint head, new base, reason, `mechanical` or `substantive` classification, invalidated checkpoints, and next required phase. Later phases contribute their completed outcomes through the ordinary comments defined below.
+When a previously merge-ready PR enters an integration refresh, classify it, then record the completed outcome as `## Integration refresh` with the current full head SHA, prior checkpoint head, new base, reason, `mechanical` or `substantive` classification, invalidated checkpoints, and next required phase. Later phases contribute their completed outcomes through the ordinary comments defined below.
 
 The merge lane advances after the active candidate merges or the merge order explicitly changes. A targeted blocker pauses the lane on its active candidate while other lanes and ticket delivery continue. When the lane advances, the orchestrator selects exactly the next candidate and evaluates its current mergeability.
 
@@ -137,9 +137,9 @@ The packet has no length limit. Preserve every implementation-relevant fact not 
 If a material-risk question remains unresolved, the conductor continues read-only investigation or resumes the same direct analysis worker and refreshes the packet; technical uncertainty does not authorize implementation. Return a targeted blocker only at the **Human Decision Boundary**. Otherwise pass the packet path to implementation and conductor-owned fix workers as working context. Keep review workers and their hosted fixers independent: the original ticket, linked spec, fixed point, and diff stay authoritative; promote any approved design or scope decision they need into the ticket or spec before review. Before reuse, verify the packet exists and atomically refresh it whenever an implementation-relevant fact it captures changes; regenerate it when missing, immediately record every replacement path with the orchestrator before deleting the prior file, and remove it during PR Cleanup or when delivery is abandoned.
 
 Spawn a worker with `implement` and the references required by **Worker Context**, plus the implementation packet path when present and verification expectations.
-Tell it to implement, run checks, commit the implementation so the fixed-point diff is reviewable, complete the `code-review` required by `implement`, and hand off the commit and candidate report.
+Tell it to follow `implement` through completion and return its handoff.
 When the worker returns implementation commits, ensure a draft PR exists with a non-closing ticket reference such as `Refs #123`.
-Apply **Review Finding Validation**, **Merge Relevance**, and **Review Finding Disposition** to candidates from the embedded review. Follow any `fix-now` findings with a conductor-owned fixer, focused verification, and a commit. Then enter **Code Review** with a fresh coordinator on the resulting head whether the embedded review reported candidates or not.
+Apply **Review Finding Disposition** to candidates from the embedded review. Follow any `fix-now` findings with a conductor-owned fixer, focused verification, and a commit. Then enter **Code Review** with a fresh coordinator on the resulting head whether the embedded review reported candidates or not.
 
 Complete when implementation commits are pushed, the PR URL is recorded, and checks, acceptance evidence, assumptions, and blockers are returned, or a targeted implementation blocker is returned with evidence.
 
@@ -148,9 +148,9 @@ Complete when implementation commits are pushed, the PR URL is recorded, and che
 Spawn a fresh worker with `code-review` and the references required by **Worker Context**.
 Treat documentation added or strengthened by the diff as implementation under review against the ticket's authority. Narrow promises beyond what the ticket requires.
 Tell the coordinator to apply the delegation contract above and report every finding as a candidate with the reviewed full head SHA, governing authority, changed location or causal path from the diff, concrete trigger, observed and required behavior, counterevidence checked, focused verification, and smallest sufficient correction.
-After the conductor validates and dispositions every candidate, append one workflow-owned PR comment whose first line is exactly `## Code review`. Include `Head`, `Fixed point`, `Cycle: <number> (initial | renewal | integration)`, the previous review comment URL when one exists, and the intervening fix commit when one exists. Record each candidate's validity, PR requirement, disposition, authority, evidence, and correction or follow-up priority.
+After the conductor validates and dispositions every candidate, record the finalized cycle as `## Code review`. Include `Head`, `Fixed point`, `Cycle: <number> (initial | renewal | integration)`, the previous review comment URL when one exists, and the intervening fix commit when one exists. Record each candidate's validity, delivery requirement, disposition, authority, evidence, and correction or follow-up priority.
 
-Complete when the report pins the reviewed head and provides enough evidence to validate every candidate finding and decide whether it is required for the PR, including blockers, missing implementation, and smallest sufficient corrections.
+Complete when the report pins the reviewed head and provides enough evidence to validate every candidate finding and decide whether it is required for this delivery, including blockers, missing implementation, and smallest sufficient corrections.
 
 ### Review Finding Validation
 
@@ -165,20 +165,22 @@ Mark a candidate `rejected` when evidence disproves it or shows it is stale, bas
 
 Group candidates by the invariant they claim is broken. A new syntax, input, or race variant in a previously fixed family is evidence that the prior correction may not have established the invariant. Reopen the root cause, determine the smallest sufficient correction from existing authority, and verify the required invariant across the supported input class.
 
-Re-establish a candidate on the current head through an authorized direct worker when its reviewed head is stale, required evidence is absent, or ungranted descendants contributed it. Validity, PR requirement, and edit authority remain separate.
+Re-establish a candidate on the current head through an authorized direct worker when its reviewed head is stale, required evidence is absent, or ungranted descendants contributed it. Validity, delivery requirement, and edit authority remain separate.
 
-### Merge Relevance
+### Delivery Scope
 
-For every candidate, record `Required for this PR: yes | no | unknown`. **Review Finding Validation** already establishes authority, relevance and causality, a concrete trigger, and the expected result. Use `yes` when leaving the finding unresolved would violate authoritative acceptance criteria, requested application behavior, or supported behavior on the changed path, and correcting it is part of the smallest coherent implementation of the approved ticket. Inspect the relevant application flow, callers, tests, domain documentation, and fixed-point behavior before deciding.
+For every candidate, record `Required for this delivery: yes | no | unknown`. **Review Finding Validation** already establishes authority, relevance and causality, a concrete trigger, and the expected result. Use `yes` when leaving the finding unresolved would violate authoritative acceptance criteria, requested application behavior, or supported behavior on the changed path, and correcting it is part of the smallest coherent implementation of the approved ticket. Inspect the relevant application flow, callers, tests, domain documentation, and fixed-point behavior before deciding.
 
-Use `no` when the application can satisfy the ticket and preserve applicable existing behavior without the finding; a confirmed finding may then become a prioritized follow-up. Use `unknown` while evidence is incomplete. A **merge-critical investigation** is an `investigate` finding whose missing evidence prevents establishing ticket acceptance or preservation of supported behavior on the changed path.
+Use `no` when the application can satisfy the ticket and preserve applicable existing behavior without the finding; a confirmed finding may then become a prioritized follow-up. Use `unknown` while evidence is incomplete. A **delivery-critical investigation** is an `investigate` finding whose missing evidence prevents establishing ticket acceptance or preservation of supported behavior on the changed path.
+
+Leaving a `yes` finding unresolved is a **scope omission**. Implementing a `no` finding in this delivery is **scope expansion**; it becomes scope creep when approved authority does not justify that expansion.
 
 ### Review Finding Disposition
 
-Apply **Review Finding Validation** and **Merge Relevance** before deciding edit authority. Each candidate records:
+Apply **Review Finding Validation** and **Delivery Scope** before deciding edit authority. Each candidate records:
 
 - `Validity: confirmed | rejected | unresolved`
-- `Required for this PR: yes | no | unknown`
+- `Required for this delivery: yes | no | unknown`
 - `Disposition: fix-now | follow-up | not-actionable | investigate | blocked`
 
 Map the evidence to a disposition:
@@ -189,29 +191,29 @@ Map the evidence to a disposition:
 - `confirmed` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
 - `unresolved` + `unknown` -> `investigate`, or `blocked` at the **Human Decision Boundary**.
 
-Send `fix-now` findings to a worker. Preserve follow-ups in the final handoff; their implementation or publication as tracker tickets requires separate authority. Severity controls urgency within a disposition, not validity, PR requirement, or edit authority.
+Send `fix-now` findings to a worker. Preserve follow-ups in the final handoff; their implementation or publication as tracker tickets requires separate authority. Severity controls urgency within a disposition, not validity, delivery requirement, or edit authority.
 Apply independent `fix-now` findings before returning a blocker unless the unresolved decision could change their correctness. Consolidate the remainder into one question that includes the findings, evidence, exact missing input, a recommendation, and whether delivery can continue independently.
 
 Use `diagnosing-bugs` for complex or important bugs.
 
 ### 4. Fix Code Review
 
-A **Code Review** phase cycle is one two-axis report, one complete finding-validation and disposition set, and at most one scoped fix batch. Apply **Review Finding Validation** and **Review Finding Disposition** to the report.
+A **Code Review** phase cycle is one two-axis report, one complete finding-validation and disposition set, and at most one scoped fix batch. Apply **Review Finding Disposition** to the report.
 
-When no finding is `fix-now`, follow the remaining dispositions: return a blocker, continue an investigation that blocks phase completion under **Merge Relevance**, or retain follow-ups and nonblocking investigations for the final handoff and advance to **Local Codex Review/Fix**.
+When no finding is `fix-now`, follow the remaining dispositions: return a blocker, continue an investigation that blocks phase completion under **Delivery Scope**, or retain follow-ups and nonblocking investigations for the final handoff and advance to **Local Codex Review/Fix**.
 
 Otherwise, the fix worker runs focused checks and commits the scoped batch, then the conductor runs aggregate checks once. If a blocker was deferred behind that independent fix batch, carry it into another code-review cycle and require explicit current-head validation and disposition before returning it or clearing it. Run another current-head code-review cycle after the fix. Continue without a numeric review limit while current-head evidence discovers `fix-now` findings; preserve follow-ups for the final handoff. Rerun aggregate checks after later code changes.
 
-Complete when every candidate has a current-head validation, PR requirement, and disposition, and either a blocker is returned or all of these hold: no `fix-now` remains unapplied, no merge-critical investigation remains, and committed fixes pass focused and aggregate checks. Follow-ups and nonblocking investigations remain recorded for the final handoff.
+Complete when every candidate has a current-head validation, delivery requirement, and disposition, and either a blocker is returned or all of these hold: no `fix-now` remains unapplied, no delivery-critical investigation remains, and committed fixes pass focused and aggregate checks. Follow-ups and nonblocking investigations remain recorded for the final handoff.
 
 ### 5. Local Codex Review/Fix
 
 Spawn a fresh `codex-local-review` worker with the references required by **Worker Context**.
 Apply **Review Finding Disposition** to each report. For `fix-now` findings, spawn one worker to run focused checks and commit, then repeat with a fresh reviewer. Carry every deferred blocker into that fresh review and require an explicit current-head disposition before returning or clearing it. When a fresh report has a blocker and no independent `fix-now` findings to apply first, return the blocker. When the remaining dispositions permit phase completion, the conductor runs aggregate checks once.
 If aggregate checks fail, diagnose the failure. If the current ticket caused it and existing authority determines a repair inside approved scope, spawn one worker for one coherent repair batch, run focused checks, and commit, then repeat local Codex review on the changed head before running aggregate checks again. Continue diagnosis, repair, fresh review, and aggregate verification until they pass or reach the **Human Decision Boundary**.
-After a successful local Codex outcome, confirm the local, remote, and PR heads match, then append one workflow-owned PR comment whose first line is exactly `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`. The latest such comment on that head is the current **local Codex checkpoint**.
+After a successful local Codex outcome, confirm the local, remote, and PR heads match. Record the outcome as `## Local Codex review`, followed by `PASS` and `Head: <full SHA>`; the latest such outcome on that head is the current **local Codex checkpoint**.
 
-Complete when no `fix-now` finding or merge-critical investigation remains, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence. Preserve follow-ups for the final handoff.
+Complete when no `fix-now` finding or delivery-critical investigation remains, aggregate checks pass, and the current local Codex checkpoint exists, or any targeted blocker is returned with evidence. Preserve follow-ups for the final handoff.
 
 ### 6. Ready PR and Run Codex PR Review
 
@@ -224,7 +226,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting ordinary in-scope fixes inside the same hosted-review phase.
-For this caller, tell the PR worker to return every hosted candidate to the conductor before authorizing a fixer. The conductor applies **Review Finding Validation**, **Merge Relevance**, and **Review Finding Disposition**, then resumes the same PR worker with only finalized `fix-now` findings authorized. Keep that work inside `codex-pr-review`; retain hosted follow-ups and nonblocking investigations for the conductor handoff.
+For this caller, tell the PR worker to return every hosted candidate to the conductor before authorizing a fixer. The conductor applies **Review Finding Disposition**, then resumes the same PR worker with only finalized `fix-now` findings authorized. Keep that work inside `codex-pr-review`; retain hosted follow-ups and nonblocking investigations for the conductor handoff.
 
 A **hosted review checkpoint** is one of:
 
@@ -239,7 +241,7 @@ Use the checkpoint type and resulting head to choose the hosted-review transitio
 - `Returned Local Codex / head changed`: re-enter this phase through the normal ready-PR sequence with the new expected head and the freshness boundary captured immediately before its latest push.
 - `Returned Local Codex / head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged expected head.
 - `Carried Delivery checkpoint / no hosted fixer commit changes implementation`: keep the integration refresh mechanical and renew the `Delivery checkpoint` with the previous scope-fit result after hosted validation.
-- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, rebind the fixed point to the integrated base full SHA, invalidate the carried scope-fit and delivery evidence, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before posting a new `Delivery checkpoint`.
+- `Carried Delivery checkpoint / any hosted fixer commit changes implementation`: classify the result as substantive, rebind the fixed point to the integrated base full SHA, invalidate the carried scope-fit and delivery evidence, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before recording a new `Delivery checkpoint`.
 
 If aggregate checks fail after a hosted fixer push, diagnose them and run one coherent scope-safe repair batch with focused checks and a commit, then resume `codex-pr-review` on the changed head. Continue diagnosis, repair, and hosted validation while existing authority determines an in-scope correction; return a targeted blocker only at the **Human Decision Boundary**.
 
@@ -261,7 +263,7 @@ Ask whether the diff is the smallest coherent implementation of the requested ou
 Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
 
-Have the conductor append a dedicated workflow-owned PR comment whose first line is exactly `## Scope fit`. An initial success comment contains `PASS`; a failure comment contains `FAIL` followed by concise scope-fit findings.
+Record the scope-fit outcome as `## Scope fit`. An initial success contains `PASS`; a failure contains `FAIL` followed by concise scope-fit findings.
 
 If the PR needs an authority-determined in-scope correction:
 
@@ -271,11 +273,11 @@ If the PR needs an authority-determined in-scope correction:
 4. Return to **Local Codex Review/Fix** for a fresh local review.
 5. Run hosted validation through **Ready PR and Run Codex PR Review**.
 6. A prescribed correction completes this phase when the conductor verifies it against the recorded scope-fit finding and fresh local and hosted validation leave the implementation head at the recorded correction SHA.
-7. Repeat **Check Final Scope Fit** after any later head change to a prescribed correction and after every substantive correction; append the rerun result as a new scope-fit comment.
+7. Repeat **Check Final Scope Fit** after any later head change to a prescribed correction and after every substantive correction; record the rerun as a new scope-fit outcome.
 
-When the verified prescribed correction passes unchanged-head validation, append a new scope-fit comment containing `PASS` after the heading and linking the prior failed scope-fit comment.
+When the verified prescribed correction passes unchanged-head validation, record a new scope-fit outcome containing `PASS` after the heading and linking the prior failed scope-fit outcome.
 
-After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, post it as a separate workflow-owned PR comment after the latest branch update.
+After a successful final outcome, if the Merge Lane requires a `Delivery checkpoint`, record it after the latest branch update.
 
 A targeted blocker that prevents Codex validation ends this phase before the scope-fit review and returns the blocker.
 
@@ -283,7 +285,7 @@ Complete when the worker reports that the final diff fits the ticket, the conduc
 
 ### Ticket Conductor Handoff
 
-The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, PR URL, local and hosted Codex outcomes, review-cycle freshness boundary and ledger closure, final scope-fit result and corrections, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner. It also includes these prioritized sections with comment and commit links: `Required for merge` and why each item was mandatory; `Completed fixes`; `Follow-up candidates` and `Follow-up investigations` ordered high, medium, then low with expected value and why each was deferred; `Not actionable` with concise evidence; `Unresolved blockers`; and `Acceptance evidence` mapping ticket criteria to implementation and verification.
+The conductor handoff must include status, ticket URL, implementation packet path when present, worktree, branch, commits, changed files, checks, PR URL, local and hosted Codex outcomes, review-cycle freshness boundary and ledger closure, final scope-fit result and corrections, aggregated `Skills loaded:` provenance, merge-ready yes/no, next action, and owner. It also includes these prioritized sections with comment and commit links: `Required for delivery` and why each item was mandatory; `Completed fixes`; `Follow-up candidates` and `Follow-up investigations` ordered high, medium, then low with expected value and why each was deferred; `Not actionable` with concise evidence; `Unresolved blockers`; and `Acceptance evidence` mapping ticket criteria to implementation and verification.
 
 ## PR Cleanup
 
