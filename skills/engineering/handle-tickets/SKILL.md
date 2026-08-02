@@ -178,7 +178,7 @@ Inspect the relevant application flow, callers, tests, domain documentation, and
 
 ### Review Finding Disposition
 
-For each `code-review` or local Codex candidate, apply **Review Finding Validation** and **Merge Relevance** before deciding edit authority. Record exactly `Validity: confirmed | rejected | unresolved`, `Required for this PR: yes | no | unknown`, and `Disposition: fix-now | follow-up | not-actionable | blocked | investigate`. Allowed combinations are: `confirmed / yes` with `fix-now` or `blocked`; `confirmed / no` with `follow-up`; `rejected / no` with `not-actionable`; and `unresolved / unknown` with `investigate` or `blocked`. Use `blocked` only at the **Human Decision Boundary** for `confirmed / yes`, or for `unresolved / unknown` when the missing proof itself prevents establishing ticket acceptance or safe supported behavior. Severity controls urgency within a disposition, not validity, PR requirement, or edit authority.
+For each `code-review` or local Codex candidate, apply **Review Finding Validation** and **Merge Relevance** before deciding edit authority. Record exactly `Validity: confirmed | rejected | unresolved`, `Required for this PR: yes | no | unknown`, and `Disposition: fix-now | follow-up | not-actionable | blocked | investigate`. Allowed combinations are: `confirmed / yes` with `fix-now` or `blocked`; `confirmed / no` with `follow-up`; `confirmed / unknown` with `investigate` or `blocked`; `rejected / no` with `not-actionable`; and `unresolved / unknown` with `investigate` or `blocked`. Use `blocked` only at the **Human Decision Boundary** for `confirmed / yes`, or when unknown merge relevance itself prevents establishing ticket acceptance or safe supported behavior. Severity controls urgency within a disposition, not validity, PR requirement, or edit authority.
 
 - Use `fix-now` without asking when every required-fix condition above is proven. Send only `fix-now` findings to a worker.
 - Use `follow-up` for a confirmed finding that may be valuable but is not required for this PR. Record `Priority: high | medium | low`, expected value, evidence, and why the application and ticket can proceed without it. Do not implement it in this delivery or create a tracker ticket without separate authority.
@@ -217,7 +217,7 @@ Spawn a PR worker to perform this sequence:
 
 Carry both values across resumptions.
 Tell the PR worker that watcher approval, including a fresh PR-body `THUMBS_UP`, is provisional until Review Ledger Closure completes. If closure finds actionable work, report `hosted review continuing` rather than PASS and keep resulting ordinary in-scope fixes inside the same hosted-review phase.
-Tell it to apply **Review Finding Validation**, **Merge Relevance**, and **Review Finding Disposition** to every hosted candidate before authorizing a fixer. Keep `fix-now` work inside `codex-pr-review`; retain hosted follow-ups and nonblocking investigations for the conductor handoff without editing them.
+For this caller, tell the PR worker to return every hosted candidate to the conductor before authorizing a fixer. The conductor applies **Review Finding Validation**, **Merge Relevance**, and **Review Finding Disposition**, then resumes the same PR worker with only finalized `fix-now` findings authorized. Keep that work inside `codex-pr-review`; retain hosted follow-ups and nonblocking investigations for the conductor handoff without editing them.
 
 A **hosted review checkpoint** is one of:
 
@@ -255,7 +255,7 @@ Treat changed files and non-test LOC as evidence, not thresholds.
 Flag unrelated responsibilities, speculative architecture, or stronger promises not required by the acceptance criteria.
 
 Have the conductor append a dedicated workflow-owned PR comment whose first line is exactly `## Scope fit`.
-On success, include only `PASS` after the heading.
+On an initial success, include only `PASS` after the heading.
 On failure, include `FAIL` followed by concise findings explaining why.
 Do not include merge readiness, checks, review status, commit SHAs, mergeability, or merge sequencing.
 
