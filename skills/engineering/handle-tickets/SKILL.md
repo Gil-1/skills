@@ -47,7 +47,7 @@ Keep delivery autonomous while approved repository authority and available evide
 
 ## PR Comment Policy
 
-Workflow-owned PR comments form an append-only record of completed evidence and decisions. The workflow contributes comments at the completed phase points defined below. A completed record that later proves inaccurate receives a concise correction linking to it.
+Workflow outcome comments form an append-only record of completed evidence and decisions. The workflow contributes them at the completed phase points defined below. Referenced skills retain ownership of their operational control comments and review-thread replies. A completed record that later proves inaccurate receives a concise correction linking to it.
 
 A **Code Review** phase cycle contributes one finalized comment after finding validation and disposition; its resulting commit is the visible fix receipt. Other phase comments record a completed review outcome, a blocker requiring external action, a finalized integration result, or a delivery checkpoint.
 
@@ -55,9 +55,9 @@ Use source URLs, repository paths, commit SHAs, and prior comment URLs as refere
 
 ## Worker Context
 
-Worker prompts carry references discovered during **Gather Context** rather than copied source content. Pass the ticket URL, worktree, branch, fixed point, and expected head, plus the PR URL once it exists. Tell each worker to follow repository instructions, including the project's domain-doc consumer rules, and consult the domain context and decisions relevant to its phase. Add another direct URL or path only when it materially governs the work and is not already discoverable through those sources.
+Worker prompts carry references discovered during **Gather Context** rather than copied source content. Pass the ticket URL, worktree, branch, fixed point, and expected head, plus the PR URL once it exists. Tell each worker to follow repository instructions, including the project's domain-doc consumer rules, and consult the domain context and decisions relevant to its phase. Add another direct URL or path only when it materially governs the work and is not already discoverable through those sources. A fix worker receives the reviewer handoff and the conductor's finalized `fix-now` dispositions; use durable URLs or paths when available and include source content only when no durable reference exists.
 
-For a renewal review, pass the immediately previous code-review comment URL and tell the coordinator to inspect earlier workflow comments when a finding repeats a prior family. Prior decisions are context, not authority: reopen one only when current-head evidence proves a regression, an incomplete correction, or newly applicable authority. The finalized review comment URL is the formal fix worker's source for findings dispositioned `fix-now`; an embedded implementation-review fixer receives the implementation handoff and the conductor's finalized `fix-now` dispositions.
+For a renewal review, pass the immediately previous code-review comment URL and tell the coordinator to inspect earlier workflow comments when a finding repeats a prior family. Prior decisions are context, not authority: reopen one when new current-head evidence changes its validity or **Delivery Scope**, including a regression, an incomplete correction, or newly applicable authority.
 
 ## Orchestrator Loop
 
@@ -173,7 +173,7 @@ For every candidate, record `Required for this delivery: yes | no | unknown`. **
 
 Use `no` when the application can satisfy the ticket and preserve applicable existing behavior without the finding; a confirmed finding may then become a prioritized follow-up. Use `unknown` while evidence is incomplete. A **delivery-critical investigation** is an `investigate` finding whose missing evidence prevents establishing ticket acceptance or preservation of supported behavior on the changed path.
 
-Leaving a `yes` finding unresolved is a **scope omission**. Implementing a `no` finding in this delivery is **scope expansion**; it becomes scope creep when approved authority does not justify that expansion.
+Leaving a `yes` finding unresolved is **scope omission**. Implementing a `no` finding without separate authority is **scope creep**.
 
 ### Review Finding Disposition
 
