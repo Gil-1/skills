@@ -69,6 +69,7 @@ Before reporting successful validation for the expected head, run one bounded cl
 
 ## Watcher And Status
 
+- Before every watcher run, review-request comment, feedback reaction or reply, fixer dispatch, or ledger closure, inspect `isDraft` with the PR Head. A draft PR performs no hosted-review side effect and returns control to its caller; hosted review resumes only after the caller reactivates the PR.
 - Run the watcher in the foreground: `node <skill-dir>/scripts/watch-codex-pr.mjs`. Treat completion as the wake signal, then inspect the PR again with `gh`; background it only when a real thread-wakeup mechanism is wired to the process.
 - Default watcher behavior: poll every 120 seconds for up to 30 minutes, wait for GitHub GraphQL quota recovery when remaining budget is low, use minimal GraphQL status checks containing PR metadata and recent PR-body reactions only, and bound feedback snapshots to recent comments/reviews/threads (`--feedback-limit`, default 50). Once current-head feedback exists, refresh the bounded feedback snapshot every interval so feedback dispositions and thread resolution are observed promptly.
 - Watcher feedback snapshots expose only watcher-fresh work in `feedbackItems` and `activeCodexThreads`, including parsed `priority` values and current-head Codex feedback that appears without a PR-body reaction; markerless feedback remains actionable but does not prove current-head completion. Total and stale counts are diagnostic. Before reporting timeout, the watcher runs one final bounded snapshot and emits `codex_feedback_changed` instead if fresh current-head feedback exists.
@@ -79,7 +80,7 @@ Before reporting successful validation for the expected head, run one bounded cl
 
 ## Loop
 
-1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,mergeStateStatus,reactionGroups`.
+1. Identify the PR with `gh pr view --json number,url,headRefName,headRefOid,baseRefName,state,isDraft,mergeStateStatus,reactionGroups`.
 2. Create or verify the dedicated worktree for the PR branch before edits/checks, reusing a caller-provided worktree when present. Record the worktree and current `headRefOid` in every fixer packet and final report.
 3. Resolve merge conflicts before waiting for Codex. Commit, push, and restart the loop.
 4. When the caller explicitly identifies a newer local checkpoint on an unchanged expected head, run one checkpoint-refresh cycle: capture the current UTC timestamp as the new review-cycle freshness boundary immediately before adding one PR comment exactly `@codex review`, then run the normal watcher loop with that expected head and boundary. The watcher combines that boundary with the request timestamp. Consume the authorization exactly once by posting that single request; do not enter this branch for ordinary fixer pushes or normal resumptions.
