@@ -144,7 +144,7 @@ A **Delivery checkpoint** is a Merge Lane-only checkpoint that allows a successf
 
 A parked PR is evaluated when it becomes the active merge candidate. A current Delivery checkpoint and clean mergeability preserve its merge-ready state. A merge conflict or repository requirement for an updated base starts an **integration refresh**. Complete **Hosted -> Local** before the conductor spawns a fresh implementation/fix worker for integration and conflict reconciliation, then classify the result before selecting the next phase:
 
-- A **mechanical integration refresh** changes only ancestry and conflict-free combination. Wait for the automatically started checks, perform **Local -> Hosted** using the carried `Delivery checkpoint`, and renew that checkpoint by linking the still-applicable scope-fit outcome after successful hosted validation.
+- A **mechanical integration refresh** changes only ancestry and conflict-free combination. After the integration push, perform **Local -> Hosted** using the carried `Delivery checkpoint` before waiting for the automatically started checks, and renew that checkpoint by linking the still-applicable scope-fit outcome after successful hosted validation.
 - A **substantive integration refresh** requires semantic conflict choices or branch-authored code, test, or documentation changes. Record the integrated base full SHA as the replacement fixed point, invalidate the carried checkpoint, and resume at **Code Review**, followed by Local Codex, hosted Codex, and final scope fit.
 
 When a previously merge-ready PR enters an integration refresh, classify it, then record the completed outcome as `## Integration refresh` with `Head`, prior checkpoint Head, new base, reason, `Classification: mechanical integration refresh | substantive integration refresh`, invalidated checkpoints, and next required phase. Later phases contribute their completed outcomes through the ordinary comments defined below.
@@ -276,7 +276,7 @@ Use the hosted-review input and resulting Head to choose the caller transition:
 - `Local Codex checkpoint / hosted review fix that is not a scope correction changes Head`: keep the fix and repeated hosted validation inside `codex-pr-review`.
 - `Local Codex checkpoint / scope correction changes Head`: return to **Local Codex Review/Fix** before hosted validation resumes.
 - `Returned Local Codex / Head changed`: re-enter this phase through the normal ready-PR sequence and refresh the hosted inputs as `codex-pr-review` requires.
-- `Returned Local Codex / Head unchanged`: identify the newer local Codex checkpoint and authorize exactly one `codex-pr-review` checkpoint-refresh request on the unchanged `expectedHeadRefOid`.
+- `Returned Local Codex / Head unchanged`: perform **Local -> Hosted** with the newer local Codex checkpoint on the unchanged `expectedHeadRefOid`; ready reactivation is the sole review trigger, so do not authorize a checkpoint-refresh `@codex review` request.
 - `Carried Delivery checkpoint / no hosted review fix changes implementation`: keep the integration refresh mechanical and renew the Delivery checkpoint by linking the still-applicable scope-fit outcome.
 - `Carried Delivery checkpoint / a hosted review fix changes implementation`: classify it as a substantive integration refresh, rebind the fixed point to the integrated base full SHA, invalidate the carried checkpoint, and return to **Code Review**, followed by Local Codex, hosted review, and scope fit before recording a new Delivery checkpoint.
 
