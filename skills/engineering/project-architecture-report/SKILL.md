@@ -1,6 +1,7 @@
 ---
 name: project-architecture-report
 description: "Creates a standalone HTML report that maps a codebase: structure, flows, dependencies, data model, symbols, risks, gaps, and likely next needs. Use when the user asks for architecture analysis, dependency or flow mapping, an HTML project report, or scripts/sub-agents to list files, functions, classes, and interfaces."
+disable-model-invocation: true
 ---
 
 # Project Architecture Report

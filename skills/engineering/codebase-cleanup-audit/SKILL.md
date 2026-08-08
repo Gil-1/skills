@@ -1,6 +1,7 @@
 ---
 name: codebase-cleanup-audit
 description: Audits a codebase for removable legacy, unused, duplicate, stale, confusing, or overcomplicated pieces before cleanup. Use when the user asks to simplify a repo, remove dead code, find legacy or unused things, fix duplicate wording/files, or research cleanup opportunities; use codebase-design for module-depth checks and improve-codebase-architecture when cleanup becomes an architecture candidate.
+disable-model-invocation: true
 ---
 
 # Codebase Cleanup Audit

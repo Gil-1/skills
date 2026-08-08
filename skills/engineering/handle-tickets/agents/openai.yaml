@@ -2,3 +2,5 @@ interface:
   display_name: "Handle Tickets"
   short_description: "Deliver tickets through local and Codex PR review"
   default_prompt: "Use $handle-tickets to deliver ready tickets through implementation, fresh code review, a local Codex review/fix loop, PR publication, and Codex PR validation."
+policy:
+  allow_implicit_invocation: false

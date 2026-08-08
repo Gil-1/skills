@@ -1,6 +1,7 @@
 ---
 name: codex-local-review
 description: Apply Codex's P0-P3 review rubric to local changes. Use for read-only reviews requiring prioritized, actionable findings.
+disable-model-invocation: true
 ---
 
 # Codex Local Review

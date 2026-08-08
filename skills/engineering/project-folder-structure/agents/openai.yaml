@@ -2,3 +2,5 @@ interface:
   display_name: "Project Folder Structure"
   short_description: "Audit and improve project structure"
   default_prompt: "Use $project-folder-structure to audit this project structure and propose a safe reorganization."
+policy:
+  allow_implicit_invocation: false

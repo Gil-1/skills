@@ -1,6 +1,7 @@
 ---
 name: project-folder-structure
 description: Audits and improves project or workspace organization using constraint-first, project-neutral structure rules. Use when Codex needs to scan, reorganize, declutter, or decide where files belong in any app, library, service, data/ML project, infrastructure repo, docs/content project, automation repo, creative asset project, workspace folder, or mixed monorepo.
+disable-model-invocation: true
 ---
 
 # Project Folder Structure
