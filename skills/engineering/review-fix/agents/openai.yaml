@@ -2,3 +2,5 @@ interface:
   display_name: "Review Fix"
   short_description: "Review changes, fix findings, and verify"
   default_prompt: "Use $review-fix to review these changes, fix actionable findings, and verify the result."
+policy:
+  allow_implicit_invocation: false

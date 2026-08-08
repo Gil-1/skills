@@ -4,7 +4,15 @@ import path from "node:path";
 import test from "node:test";
 
 const engineeringDir = path.resolve("skills/engineering");
-const userOnlySkills = new Set(["handle-tickets"]);
+const userOnlySkills = new Set([
+  "codebase-cleanup-audit",
+  "codex-local-review",
+  "codex-pr-review",
+  "handle-tickets",
+  "project-architecture-report",
+  "project-folder-structure",
+  "review-fix",
+]);
 
 async function publishedSkillDirectories() {
   const entries = await readdir(engineeringDir, { withFileTypes: true });

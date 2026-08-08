@@ -2,3 +2,5 @@ interface:
   display_name: "Codex PR Review"
   short_description: "Run Codex review, fixes, and repeated-feedback investigation"
   default_prompt: "Use $codex-pr-review to wait for Codex PR validation, delegate Codex comment fixes when needed, investigate repeated feedback patterns, and report the final PR review status."
+policy:
+  allow_implicit_invocation: false

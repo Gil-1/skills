@@ -1,6 +1,7 @@
 ---
 name: review-fix
 description: Reviews code changes and fixes actionable findings. Use when the user asks to review and repair a branch, pull request, commit range, or completed implementation.
+disable-model-invocation: true
 ---
 
 # Review Fix

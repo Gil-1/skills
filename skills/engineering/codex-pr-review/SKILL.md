@@ -1,6 +1,7 @@
 ---
 name: codex-pr-review
 description: Run Codex validation on an existing GitHub PR. Use when waiting for Codex status, delegating review fixes to a sub-agent, investigating repeated feedback patterns, and repeating until Codex approves, blocks with evidence, or times out.
+disable-model-invocation: true
 ---
 
 # Codex PR Review
