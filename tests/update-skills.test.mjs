@@ -54,6 +54,61 @@ test("update retries transport failures and reports the final cause", async () =
   assert.equal(attempts, 3);
 });
 
+test("update retries a transient inventory body-stream failure", async () => {
+  let attempts = 0;
+  const delays = [];
+  const published = await fetchPublishedSources({
+    sourceList: [inventorySource],
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+        return { names: ["example"] };
+      },
+    }),
+    sleep: async (delay) => delays.push(delay),
+  });
+
+  assert.deepEqual(published[0].names, ["example"]);
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [250]);
+});
+
+test("update keeps malformed inventory JSON deterministic", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          attempts += 1;
+          throw new SyntaxError("Unexpected token");
+        },
+      }),
+      sleep: async () => {},
+    }),
+    /Unexpected token/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("update includes nested native fetch error codes in final diagnostics", async () => {
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+      },
+      sleep: async () => {},
+    }),
+    /after 3 attempt\(s\): fetch failed \(cause: ENOTFOUND\)/,
+  );
+});
+
 test("update fails deterministic inventory errors without retrying", async () => {
   let attempts = 0;
   await assert.rejects(

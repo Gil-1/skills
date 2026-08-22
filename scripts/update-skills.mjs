@@ -14,6 +14,14 @@ const agents = ["claude-code", "codex", "opencode"];
 const skillsCli = "skills@1.5.19";
 const inventoryFetchMaxAttempts = 3;
 const inventoryRetryDelayMs = 250;
+const retryableErrorCodes = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "UND_ERR_SOCKET",
+]);
 const sources = [
   {
     repository: "mattpocock/skills",
@@ -122,11 +130,20 @@ async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => ne
         signal: AbortSignal.timeout(15_000),
       });
 
-      if (response.ok) return response;
-      cause = `HTTP ${response.status}`;
-      if (response.status < 500 && response.status !== 429) break;
+      if (response.ok) {
+        try {
+          return await response.json();
+        } catch (error) {
+          if (!isRetryableError(error)) throw error;
+          cause = formatFetchError(error);
+        }
+      } else {
+        cause = `HTTP ${response.status}`;
+        if (response.status < 500 && response.status !== 429) break;
+      }
     } catch (error) {
-      cause = error instanceof Error ? error.message : String(error);
+      if (error instanceof SyntaxError) throw error;
+      cause = formatFetchError(error);
     }
 
     if (attempt < inventoryFetchMaxAttempts) await sleep(inventoryRetryDelayMs * 2 ** (attempt - 1));
@@ -137,11 +154,26 @@ async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => ne
   );
 }
 
+function isRetryableError(error) {
+  for (let current = error; current; current = current.cause) {
+    if (retryableErrorCodes.has(current?.code)) return true;
+  }
+  return false;
+}
+
+function formatFetchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const codes = [];
+  for (let current = error; current; current = current.cause) {
+    if (current.code && !codes.includes(current.code)) codes.push(current.code);
+  }
+  return codes.length > 0 ? `${message} (cause: ${codes.join(", ")})` : message;
+}
+
 async function fetchPublishedSources({ fetchImpl = fetch, sleep, sourceList = sources } = {}) {
   return Promise.all(
     sourceList.map(async (source) => {
-      const response = await fetchInventory(source, { fetchImpl, sleep });
-      const inventory = await response.json();
+      const inventory = await fetchInventory(source, { fetchImpl, sleep });
       const names = source.skillNames(inventory, source.repository);
       if (names.length === 0) throw new Error(`${source.repository} has no published skills.`);
       return { ...source, names };
