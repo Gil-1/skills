@@ -121,6 +121,32 @@ test("update fails non-retryable encoded-body errors without retrying", async ()
   assert.equal(attempts, 1);
 });
 
+test("update retries native body timeout and abort errors", async () => {
+  for (const timeoutError of [
+    Object.assign(new Error("body timeout"), { code: "UND_ERR_BODY_TIMEOUT" }),
+    new DOMException("body timeout", "TimeoutError"),
+    new DOMException("body aborted", "AbortError"),
+  ]) {
+    let attempts = 0;
+    const published = await fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          attempts += 1;
+          if (attempts === 1) throw timeoutError;
+          return { names: ["example"] };
+        },
+      }),
+      sleep: async () => {},
+    });
+
+    assert.deepEqual(published[0].names, ["example"]);
+    assert.equal(attempts, 2);
+  }
+});
+
 test("update includes nested native fetch error codes in final diagnostics", async () => {
   await assert.rejects(
     fetchPublishedSources({

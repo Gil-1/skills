@@ -21,6 +21,7 @@ const retryableErrorCodes = new Set([
   "EAI_AGAIN",
   "ENOTFOUND",
   "UND_ERR_SOCKET",
+  "UND_ERR_BODY_TIMEOUT",
 ]);
 const sources = [
   {
@@ -161,7 +162,9 @@ async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => ne
 
 function isRetryableError(error) {
   for (let current = error; current; current = current.cause) {
-    if (retryableErrorCodes.has(current?.code)) return true;
+    if (retryableErrorCodes.has(current?.code) || ["AbortError", "TimeoutError"].includes(current?.name)) {
+      return true;
+    }
   }
   return false;
 }
