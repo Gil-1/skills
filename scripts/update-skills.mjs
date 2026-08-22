@@ -12,6 +12,17 @@ import { createNpxInvocation } from "./link-skills.mjs";
 const scriptPath = fileURLToPath(import.meta.url);
 const agents = ["claude-code", "codex", "opencode"];
 const skillsCli = "skills@1.5.19";
+const inventoryFetchMaxAttempts = 3;
+const inventoryRetryDelayMs = 250;
+const retryableErrorCodes = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "UND_ERR_SOCKET",
+  "UND_ERR_BODY_TIMEOUT",
+]);
 const sources = [
   {
     repository: "mattpocock/skills",
@@ -103,22 +114,74 @@ function topLevelSkillNames(tree, repository) {
     .sort();
 }
 
-async function fetchPublishedSources() {
-  return Promise.all(
-    sources.map(async (source) => {
-      const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-      const response = await fetch(source.inventoryUrl, {
+async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)) } = {}) {
+  let cause;
+  let attempts = 0;
+
+  for (let attempt = 1; attempt <= inventoryFetchMaxAttempts; attempt += 1) {
+    attempts = attempt;
+    let response;
+    try {
+      response = await fetchImpl(source.inventoryUrl, {
         headers: {
           "User-Agent": "gil-skills-update",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...((process.env.GITHUB_TOKEN || process.env.GH_TOKEN)
+            ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN || process.env.GH_TOKEN}` }
+            : {}),
         },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!response.ok) {
-        throw new Error(`Unable to fetch ${source.inventoryUrl}: HTTP ${response.status}`);
-      }
+    } catch (error) {
+      cause = formatFetchError(error);
+    }
 
-      const inventory = await response.json();
+    if (!response) {
+      if (attempt < inventoryFetchMaxAttempts) await sleep(inventoryRetryDelayMs * 2 ** (attempt - 1));
+      continue;
+    }
+
+    if (response.ok) {
+      try {
+        return await response.json();
+      } catch (error) {
+        if (!isRetryableError(error)) throw error;
+        cause = formatFetchError(error);
+      }
+    } else {
+      cause = `HTTP ${response.status}`;
+      if (response.status < 500 && response.status !== 429) break;
+    }
+
+    if (attempt < inventoryFetchMaxAttempts) await sleep(inventoryRetryDelayMs * 2 ** (attempt - 1));
+  }
+
+  throw new Error(
+    `Unable to fetch ${source.inventoryUrl} after ${attempts} attempt(s): ${cause}`,
+  );
+}
+
+function isRetryableError(error) {
+  for (let current = error; current; current = current.cause) {
+    if (retryableErrorCodes.has(current?.code) || ["AbortError", "TimeoutError"].includes(current?.name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function formatFetchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const codes = [];
+  for (let current = error; current; current = current.cause) {
+    if (current.code && !codes.includes(current.code)) codes.push(current.code);
+  }
+  return codes.length > 0 ? `${message} (cause: ${codes.join(", ")})` : message;
+}
+
+async function fetchPublishedSources({ fetchImpl = fetch, sleep, sourceList = sources } = {}) {
+  return Promise.all(
+    sourceList.map(async (source) => {
+      const inventory = await fetchInventory(source, { fetchImpl, sleep });
       const names = source.skillNames(inventory, source.repository);
       if (names.length === 0) throw new Error(`${source.repository} has no published skills.`);
       return { ...source, names };
@@ -436,4 +499,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   });
 }
 
-export { buildAddArgs, linkOpenCodeSkills, reconcilePublishedSkillLinks, resolveSkillPaths, topLevelSkillNames };
+export {
+  buildAddArgs,
+  fetchPublishedSources,
+  linkOpenCodeSkills,
+  reconcilePublishedSkillLinks,
+  resolveSkillPaths,
+  topLevelSkillNames,
+};

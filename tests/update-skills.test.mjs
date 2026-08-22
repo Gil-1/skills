@@ -6,11 +6,177 @@ import test from "node:test";
 
 import {
   buildAddArgs,
+  fetchPublishedSources,
   linkOpenCodeSkills,
   reconcilePublishedSkillLinks,
   resolveSkillPaths,
   topLevelSkillNames,
 } from "../scripts/update-skills.mjs";
+
+const inventorySource = {
+  repository: "example/skills",
+  inventoryUrl: "https://example.test/inventory.json",
+  skillNames: (inventory) => inventory.names,
+};
+
+const inventoryResponse = (status, names = ["example"]) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => ({ names }),
+});
+
+test("update retries transient inventory failures without waiting in tests", async () => {
+  const statuses = [503, 429, 200];
+  const delays = [];
+  const published = await fetchPublishedSources({
+    sourceList: [inventorySource],
+    fetchImpl: async () => inventoryResponse(statuses.shift()),
+    sleep: async (delay) => delays.push(delay),
+  });
+
+  assert.deepEqual(published[0].names, ["example"]);
+  assert.deepEqual(delays, [250, 500]);
+});
+
+test("update retries transport failures and reports the final cause", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new Error("temporary DNS failure");
+      },
+      sleep: async () => {},
+    }),
+    /Unable to fetch https:\/\/example\.test\/inventory\.json after 3 attempt\(s\): temporary DNS failure/,
+  );
+  assert.equal(attempts, 3);
+});
+
+test("update retries a transient inventory body-stream failure", async () => {
+  let attempts = 0;
+  const delays = [];
+  const published = await fetchPublishedSources({
+    sourceList: [inventorySource],
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+        return { names: ["example"] };
+      },
+    }),
+    sleep: async (delay) => delays.push(delay),
+  });
+
+  assert.deepEqual(published[0].names, ["example"]);
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [250]);
+});
+
+test("update keeps malformed inventory JSON deterministic", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          attempts += 1;
+          throw new SyntaxError("Unexpected token");
+        },
+      }),
+      sleep: async () => {},
+    }),
+    /Unexpected token/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("update fails non-retryable encoded-body errors without retrying", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-encoding": "gzip" }),
+        json: async () => {
+          attempts += 1;
+          const error = new Error("invalid compressed body");
+          error.code = "Z_DATA_ERROR";
+          throw error;
+        },
+      }),
+      sleep: async () => {
+        throw new Error("should not wait");
+      },
+    }),
+    (error) => error.code === "Z_DATA_ERROR" && error.message === "invalid compressed body",
+  );
+  assert.equal(attempts, 1);
+});
+
+test("update retries native body timeout and abort errors", async () => {
+  for (const timeoutError of [
+    Object.assign(new Error("body timeout"), { code: "UND_ERR_BODY_TIMEOUT" }),
+    new DOMException("body timeout", "TimeoutError"),
+    new DOMException("body aborted", "AbortError"),
+  ]) {
+    let attempts = 0;
+    const published = await fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          attempts += 1;
+          if (attempts === 1) throw timeoutError;
+          return { names: ["example"] };
+        },
+      }),
+      sleep: async () => {},
+    });
+
+    assert.deepEqual(published[0].names, ["example"]);
+    assert.equal(attempts, 2);
+  }
+});
+
+test("update includes nested native fetch error codes in final diagnostics", async () => {
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+      },
+      sleep: async () => {},
+    }),
+    /after 3 attempt\(s\): fetch failed \(cause: ENOTFOUND\)/,
+  );
+});
+
+test("update fails deterministic inventory errors without retrying", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => {
+        attempts += 1;
+        return inventoryResponse(404);
+      },
+      sleep: async () => {
+        throw new Error("should not wait");
+      },
+    }),
+    /after 1 attempt\(s\): HTTP 404/,
+  );
+  assert.equal(attempts, 1);
+});
 
 test("update installs skills for OpenCode", () => {
   const args = buildAddArgs({ repository: "Gil-1/skills", names: ["codex-pr-review"] });
