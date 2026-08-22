@@ -96,6 +96,31 @@ test("update keeps malformed inventory JSON deterministic", async () => {
   assert.equal(attempts, 1);
 });
 
+test("update fails non-retryable encoded-body errors without retrying", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    fetchPublishedSources({
+      sourceList: [inventorySource],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-encoding": "gzip" }),
+        json: async () => {
+          attempts += 1;
+          const error = new Error("invalid compressed body");
+          error.code = "Z_DATA_ERROR";
+          throw error;
+        },
+      }),
+      sleep: async () => {
+        throw new Error("should not wait");
+      },
+    }),
+    (error) => error.code === "Z_DATA_ERROR" && error.message === "invalid compressed body",
+  );
+  assert.equal(attempts, 1);
+});
+
 test("update includes nested native fetch error codes in final diagnostics", async () => {
   await assert.rejects(
     fetchPublishedSources({

@@ -119,8 +119,9 @@ async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => ne
 
   for (let attempt = 1; attempt <= inventoryFetchMaxAttempts; attempt += 1) {
     attempts = attempt;
+    let response;
     try {
-      const response = await fetchImpl(source.inventoryUrl, {
+      response = await fetchImpl(source.inventoryUrl, {
         headers: {
           "User-Agent": "gil-skills-update",
           ...((process.env.GITHUB_TOKEN || process.env.GH_TOKEN)
@@ -129,21 +130,25 @@ async function fetchInventory(source, { fetchImpl = fetch, sleep = (delay) => ne
         },
         signal: AbortSignal.timeout(15_000),
       });
-
-      if (response.ok) {
-        try {
-          return await response.json();
-        } catch (error) {
-          if (!isRetryableError(error)) throw error;
-          cause = formatFetchError(error);
-        }
-      } else {
-        cause = `HTTP ${response.status}`;
-        if (response.status < 500 && response.status !== 429) break;
-      }
     } catch (error) {
-      if (error instanceof SyntaxError) throw error;
       cause = formatFetchError(error);
+    }
+
+    if (!response) {
+      if (attempt < inventoryFetchMaxAttempts) await sleep(inventoryRetryDelayMs * 2 ** (attempt - 1));
+      continue;
+    }
+
+    if (response.ok) {
+      try {
+        return await response.json();
+      } catch (error) {
+        if (!isRetryableError(error)) throw error;
+        cause = formatFetchError(error);
+      }
+    } else {
+      cause = `HTTP ${response.status}`;
+      if (response.status < 500 && response.status !== 429) break;
     }
 
     if (attempt < inventoryFetchMaxAttempts) await sleep(inventoryRetryDelayMs * 2 ** (attempt - 1));
