@@ -12,6 +12,7 @@ const userOnlySkills = new Set([
   "project-architecture-report",
   "project-folder-structure",
   "review-fix",
+  "state-machine-sweep",
 ]);
 
 async function publishedSkillDirectories() {

@@ -32,6 +32,7 @@ The stable Gil set includes:
 - `project-folder-structure` - audits and improves project or workspace organization across app, library, data, infrastructure, docs, automation, creative, and monorepo contexts.
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
+- `state-machine-sweep` - finds implicit state machines in an app and makes the best decision for UX, DX and AX.
 
 Skills under `skills/in-progress/` are internal and are not included in the updater.
 

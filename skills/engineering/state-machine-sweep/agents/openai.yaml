@@ -1,0 +1,6 @@
+interface:
+  display_name: "State Machine Sweep"
+  short_description: "Find implicit state machines and make them explicit"
+  default_prompt: "Use $state-machine-sweep to find the implicit state machines in this app and make them explicit without breaking anything."
+policy:
+  allow_implicit_invocation: false
