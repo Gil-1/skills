@@ -1,12 +1,14 @@
 ---
-name: delete-comment
+name: clean-comment
 description: Sorts every code comment in a scope into tautology, excuse, stale or decision record, acts on each, then bans new ones with a ratcheting lint rule. Use when the user asks to delete or clean up code comments.
 disable-model-invocation: true
 ---
 
-# Delete Comment
+# Clean Comment
 
 Scope: the part of the code the user names, or the whole codebase if they name none.
+
+Exclude machine-interpreted comments from the cleanup and lint rule.
 
 Take a look at every code comment in the scope.
 

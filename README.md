@@ -33,7 +33,7 @@ The stable Gil set includes:
 - `codebase-cleanup-audit` - maps legacy, unused, duplicate, stale, and overcomplicated pieces before cleanup.
 - `project-architecture-report` - creates a standalone HTML architecture report.
 - `state-machine-sweep` - finds implicit state machines in an app and makes the best decision for UX, DX and AX.
-- `delete-comment` - sorts code comments in a scope, deletes or moves each to an ADR, and bans new ones with a ratcheting lint rule.
+- `clean-comment` - sorts code comments in a scope, deletes or moves each to an ADR, and bans new ones with a ratcheting lint rule.
 
 Skills under `skills/in-progress/` are internal and are not included in the updater.
 
