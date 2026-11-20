@@ -1,0 +1,6 @@
+interface:
+  display_name: "Delete Comment"
+  short_description: "Sort code comments, delete or move them, and ban new ones"
+  default_prompt: "Use $delete-comment to clean up the code comments in this codebase."
+policy:
+  allow_implicit_invocation: false
