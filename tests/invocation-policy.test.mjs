@@ -6,7 +6,7 @@ import test from "node:test";
 const engineeringDir = path.resolve("skills/engineering");
 const userOnlySkills = new Set([
   "codebase-cleanup-audit",
-  "clean-comment",
+  "clean-comments",
   "clean-tests",
   "codex-local-review",
   "codex-pr-review",
