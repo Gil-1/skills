@@ -35,6 +35,7 @@ The stable Gil set includes:
 - `state-machine-sweep` - finds implicit state machines in an app and makes the best decision for UX, DX and AX.
 - `clean-comments` - sorts code comments in a scope, deletes or moves each to an ADR, and bans new ones with a ratcheting lint rule.
 - `clean-tests` - sorts tests into echo, coupled, duplicate or needed, then removes or rewrites those that do not catch a distinct real bug.
+- `clean-adrs` - sorts ADRs and their points into duplicate, stale, obvious or needed, then merges, rewrites or deletes them so only true, needed decisions remain.
 
 Skills under `skills/in-progress/` are internal and are not included in the updater.
 

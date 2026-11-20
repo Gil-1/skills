@@ -8,6 +8,7 @@ const userOnlySkills = new Set([
   "codebase-cleanup-audit",
   "clean-comments",
   "clean-tests",
+  "clean-adrs",
   "codex-local-review",
   "codex-pr-review",
   "handle-tickets",
