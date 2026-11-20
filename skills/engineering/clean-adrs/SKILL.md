@@ -12,7 +12,7 @@ An ADR is needed only if it records a decision a developer would otherwise get w
 
 Take a look at every ADR in the scope, next to the code it describes.
 
-Categorise each ADR, or each point it, as as:
+Categorise each ADR, or each point in it, as:
 
 - Duplicate: a statement another ADR also makes, even one about an unrelated topic
 - Stale: the code no longer does what it says
