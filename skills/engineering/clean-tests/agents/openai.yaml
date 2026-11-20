@@ -1,0 +1,6 @@
+interface:
+  display_name: "Clean Tests"
+  short_description: "Keep only tests that catch distinct real bugs"
+  default_prompt: "Use $clean-tests to clean up the tests in this codebase."
+policy:
+  allow_implicit_invocation: false

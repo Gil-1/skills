@@ -7,6 +7,7 @@ const engineeringDir = path.resolve("skills/engineering");
 const userOnlySkills = new Set([
   "codebase-cleanup-audit",
   "clean-comment",
+  "clean-tests",
   "codex-local-review",
   "codex-pr-review",
   "handle-tickets",
