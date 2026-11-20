@@ -1,0 +1,6 @@
+interface:
+  display_name: "Clean ADRs"
+  short_description: "Dedupe ADRs, check them against code, keep only what is needed"
+  default_prompt: "Use $clean-adrs to clean up the ADRs in this codebase."
+policy:
+  allow_implicit_invocation: false
